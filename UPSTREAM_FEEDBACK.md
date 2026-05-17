@@ -42,6 +42,7 @@ UF status legend:
 | [UP-003](#up-003) | UDP+TCP authoritative-DNS client with TC-flag fallback and multi-server failover, sharing the EDNS / DO query builder with the DoH client | `resolver/auth/` | proposed |
 | [UP-004](#up-004) | NSEC / NSEC3 negative-proof primitives + Insecure-delegation + leaf NODATA / NXDOMAIN classification, six-state Verdict | `dnssec/canon.go`, `dnssec/nsec.go`, `dnssec/nsec3.go`, `verifier/negative.go`, `verifier/leaf_negative.go`, `verifier/verdict.go` | proposed |
 | [UP-005](#up-005) | CNAME / DNAME chasing with worst-of verdict combination, alias-loop detection, MaxAliasHops cap, AliasStep records | `verifier/alias.go`, `verifier/chain.go::Validate`, `verifier/result.go::AliasStep` | proposed |
+| [UP-006](#up-006) | Wildcard-synthesised positive answer support: digest target reconstruction (RFC 4035 §5.3.2) + next-closer non-existence proof (§5.3.4), `Result.Wildcard` evidence field | `dnssec/canon.go`, `dnssec/zone.go::CreateDigestTarget`, `verifier/wildcard.go`, `verifier/result.go::WildcardInfo` | proposed |
 
 UP status legend:
 
@@ -728,6 +729,99 @@ type Result struct {
   port can pick its own number but should document any deviation.
 
 **Status.** Ships in dnsdata-go v0.2.0 (Week 5). Awaiting an issue on
+dnsdata-js to track the TS port.
+
+---
+
+## UP-006
+
+Wildcard-synthesised positive answer support. Detects responses
+produced by wildcard expansion, reconstructs the wildcard owner so
+the RRSIG over `*.<closest-encloser>` validates against records
+appearing at the synthesised qname, and enforces the RFC 4035 §5.3.4
+non-existence proof so the wildcard cannot be replayed at unrelated
+names.
+
+**Go source.** `dnssec/canon.go` (LabelCount, LastNLabels),
+`dnssec/zone.go::CreateDigestTarget` (wildcard reconstruction
+branch), `dnssec/zone.go::wireHeaderForOwner` (header construction
+that decouples the owner from `rr.Label`), `verifier/wildcard.go`
+(detectWildcard, proveQnameNonExistence),
+`verifier/chain.go::resolveLeaf` (wildcard wiring),
+`verifier/result.go::WildcardInfo`.
+
+**Public API.**
+
+```go
+// dnssec
+func LabelCount(name string) int
+func LastNLabels(name string, n int) string
+
+// verifier
+type WildcardInfo struct {
+    Source          string `json:"source"`
+    ClosestEncloser string `json:"closestEncloser"`
+    NextCloser      string `json:"nextCloser"`
+    ProofReason     string `json:"proofReason"`
+}
+
+type Result struct {
+    // ... existing fields ...
+    Wildcard *WildcardInfo `json:"wildcard,omitempty"`
+}
+```
+
+**Design decisions.**
+
+1. **Wildcard handling lives in dnssec, detection lives in verifier.**
+   The dnssec layer treats wildcard reconstruction as a pure
+   property of `RRSIG.Labels`: when `Labels < LabelCount(name)`, the
+   digest target is reconstructed at the wildcard owner. Signers
+   that set `Labels` correctly produce matching digests; validators
+   that read `Labels` produce matching digests. No new public method
+   was needed. The verifier still needs to know synthesis occurred
+   (to surface `Result.Wildcard` and to demand the non-existence
+   proof), which is what `detectWildcard` does — by reading the same
+   `Labels` field after a successful verify.
+2. **No new verdict.** Wildcard synthesis with a valid non-existence
+   proof is just Secure with an additional evidence field. This
+   keeps the verdict enum at six states. Consumers who care about
+   "did this answer come from a wildcard?" check `Result.Wildcard
+   != nil`.
+3. **Proof shapes are minimal.** RFC 4035 §5.3.4 requires proving
+   the next-closer name does not exist. With NSEC that is a
+   covering NSEC at any owner. With NSEC3 that is a covering NSEC3
+   at H(next-closer). Both are existing primitives from UP-004.
+4. **Detection runs only after positive verification.** This avoids
+   doing closest-encloser computation on responses that will fail
+   anyway, and matches what a real validator does in pipeline order.
+5. **Reconstruction is bidirectional.** A signer that calls
+   `Zone.CreateDigestTarget` with `rrsig.Labels` set to the wildcard
+   semantics (excluding `*`) produces a wildcard-owner digest target
+   from records at the wildcard owner. A validator that calls the
+   same function on records at a synthesised qname with the
+   matching `Labels` produces an identical digest target. Same
+   function, same semantics on both sides.
+6. **LabelCount / LastNLabels are exported.** Tests, signers, and
+   other callers porting RFC 4034 §3.1.3 logic (e.g. wildcard
+   support in NSEC validators) reuse the same helpers instead of
+   reinventing the dot-splitting.
+
+**TS migration notes.**
+
+- The same Labels-driven branch in CreateDigestTarget translates
+  literally: `if (rrsig.labels < labelCount(name)) { digestOwner =
+  '*.' + lastNLabels(name, rrsig.labels); }`.
+- `detectWildcard` is a one-liner that inspects `rrsig.labels` of
+  whichever signature validated; the verifier-side wrapper can read
+  the same array of signatures it already iterated.
+- `proveQnameNonExistence` is structurally identical to the NXDOMAIN
+  helper landed under UP-004; in many TS implementations it can be
+  a thin re-export.
+- The `WildcardInfo` JSON shape is small and additive; consumers
+  ignoring unknown fields keep working unchanged.
+
+**Status.** Ships in dnsdata-go v0.2.0 (Week 6). Awaiting an issue on
 dnsdata-js to track the TS port.
 
 ---

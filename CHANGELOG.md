@@ -35,6 +35,20 @@ this project adheres to [Semantic Versioning](https://semver.org/).
     hops. Loops are reported as Bogus with reason "alias loop
     detected"; chains longer than `MaxAliasHops` are reported as
     Bogus with reason "alias chain exceeded N hops".
+  - **Wildcard-synthesised positive answers.** When a covering
+    RRSIG's `Labels` field is fewer than the qname's label count,
+    the validator detects wildcard synthesis (RFC 4034 §3.1.3),
+    reconstructs the wildcard owner for digest computation, and
+    requires a signed NSEC / NSEC3 proof that the next-closer name
+    does not exist (RFC 4035 §5.3.4). On success the verdict
+    stays Secure and the new `Result.Wildcard` field carries the
+    reconstructed wildcard owner, closest encloser, next-closer
+    name, and proof source. Missing or invalid non-existence proof
+    classifies the answer Bogus.
+- `dnssec.LabelCount`, `dnssec.LastNLabels` — RFC 4034 §3.1.3
+  helpers used by the wildcard reconstructor (and reusable by
+  callers porting the same logic to other RR types).
+- `Result.Wildcard *WildcardInfo` field (JSON-omitempty).
 - Two new verdicts: `VerdictSecureNoData` (JSON `"secure-nodata"`)
   and `VerdictSecureNXDomain` (JSON `"secure-nxdomain"`). The four
   existing verdict strings are unchanged.
@@ -51,8 +65,12 @@ this project adheres to [Semantic Versioning](https://semver.org/).
   `resolveLeaf` + outer alias loop. Public signature unchanged.
   Existing callers see identical behaviour for non-aliased queries.
 - `verifier/doc.go` "Out of scope" list now only retains RFC 5011
-  trust-anchor rollover, DNSKEY / DS cache, and wildcard-synthesised
-  positive answers.
+  trust-anchor rollover and the DNSKEY / DS cache.
+- `dnssec.Zone.CreateDigestTarget` reads `rrsig.Labels` to decide
+  whether to substitute the wildcard owner for digest header
+  construction. Non-wildcard callers are unaffected because the
+  reconstruction branch only fires when `Labels` is strictly less
+  than the rrset owner's label count.
 
 ## [0.1.0] — Initial release
 

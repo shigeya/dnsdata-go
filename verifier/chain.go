@@ -100,6 +100,9 @@ func (v *Verifier) Validate(ctx context.Context, qname string, qtype uint16) (*R
 		if outcome.NegativeReason != "" {
 			result.NegativeReason = outcome.NegativeReason
 		}
+		if outcome.Wildcard != nil {
+			result.Wildcard = outcome.Wildcard
+		}
 		return result, nil
 	}
 
@@ -123,6 +126,7 @@ type hopOutcome struct {
 	InsecureReason string
 	NegativeReason string
 	Alias          *AliasStep
+	Wildcard       *WildcardInfo
 }
 
 // validateOneHop runs a single chain-walk + leaf-resolution against
@@ -216,6 +220,22 @@ func (v *Verifier) resolveLeaf(ctx context.Context, currentZone *dnssec.Zone, cu
 				BogusAt:     currentName,
 				BogusReason: fmt.Sprintf("RRSIG over %s/%s did not verify", qname, qtypeMnemonic(qtype)),
 			}, nil
+		}
+		// Verified. If the covering RRSIG's Labels field indicates
+		// wildcard synthesis, RFC 4035 §5.3.4 also requires a proof
+		// that the next-closer name does not exist — otherwise the
+		// wildcard rrset could be replayed at any non-existent name.
+		if wc := detectWildcard(currentZone, qname, qtype); wc != nil {
+			proven, reason := v.proveQnameNonExistence(currentZone, wc.NextCloser)
+			if !proven {
+				return &hopOutcome{
+					Verdict:     VerdictBogus,
+					BogusAt:     currentName,
+					BogusReason: fmt.Sprintf("wildcard synthesis at %s lacks non-existence proof for %s", wc.Source, wc.NextCloser),
+				}, nil
+			}
+			wc.ProofReason = reason
+			return &hopOutcome{Verdict: VerdictSecure, Wildcard: wc}, nil
 		}
 		return &hopOutcome{Verdict: VerdictSecure}, nil
 	}

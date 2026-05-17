@@ -50,6 +50,22 @@ func NewZone() *Zone {
 	return &Zone{Zone: &zone.Zone{}}
 }
 
+// wireHeaderForOwner emits the RR-header bytes
+// (owner_name(wire) + type(uint16) + class(uint16)) for an explicit
+// owner. Used by [Zone.CreateDigestTarget] when wildcard
+// reconstruction overrides the rrset's literal owner.
+func wireHeaderForOwner(owner string, rrtype, class uint16) ([]byte, error) {
+	nameWire, err := wire.DomainNameToWire(owner)
+	if err != nil {
+		return nil, err
+	}
+	var b wire.Builder
+	b.AppendBytes(nameWire)
+	b.AppendUint16(rrtype)
+	b.AppendUint16(class)
+	return b.Clone(), nil
+}
+
 // Parent returns the parent zone, or nil if this zone is the top of the
 // configured chain (e.g. the root or an unattached trust anchor).
 func (z *Zone) Parent() *Zone { return z.parent }
@@ -122,11 +138,20 @@ func (z *Zone) CreateDigestTarget(rrsig *RRSig, name string, typeCovered uint16)
 		return nil, nil
 	}
 
-	var header wire.Builder
-	if err := rrset[0].WireHeader(&header); err != nil {
+	// RFC 4035 §5.3.2: when RRSIG.Labels is fewer than the number of
+	// labels in the rrset's owner name, the answer was synthesised by
+	// wildcard expansion. The verifier reconstructs the original
+	// wildcard owner ("*." + the right-most RRSIG.Labels labels of
+	// name) and signs with that owner instead.
+	digestOwner := rrset[0].Label
+	if expected := LabelCount(name); int(rrsig.Labels) < expected {
+		digestOwner = "*." + LastNLabels(name, int(rrsig.Labels))
+	}
+
+	headerBytes, err := wireHeaderForOwner(digestOwner, rrset[0].Type, rrset[0].Class)
+	if err != nil {
 		return nil, fmt.Errorf("%w: wire header: %v", ErrDNSSEC, err)
 	}
-	headerBytes := header.Clone()
 
 	bodies := make([][]byte, 0, len(rrset))
 	for _, rr := range rrset {

@@ -64,3 +64,21 @@ func canonLabels(name string) []string {
 func EqualCanonicalNames(a, b string) bool {
 	return strings.EqualFold(strings.TrimSuffix(a, "."), strings.TrimSuffix(b, "."))
 }
+
+// LabelCount returns the number of labels in name, excluding the root
+// label. "example.com." and "example.com" both return 2; "." returns
+// 0. Used by wildcard handling (RFC 4034 §3.1.3) and ancestor walks.
+func LabelCount(name string) int {
+	return len(canonLabels(name))
+}
+
+// LastNLabels returns the right-most n labels of name as a
+// fully-qualified domain name (with trailing dot). Returns "." if n
+// is zero or larger than the label count of name.
+func LastNLabels(name string, n int) string {
+	labels := canonLabels(name)
+	if n <= 0 || n > len(labels) {
+		return "."
+	}
+	return strings.Join(labels[len(labels)-n:], ".") + "."
+}

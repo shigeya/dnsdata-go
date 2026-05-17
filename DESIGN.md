@@ -118,6 +118,7 @@ Mirror of the schedule table in mailsec-probe `DESIGN.md §16`.
 | Week 3 | `verifier/chain.go` (chain walker), `resolver/auth/`, `v0.1.0` tag | implement `--dnssec-mode validate`, swap in `internal/probe/dnssec/`, regenerate goldens |
 | Week 4 | NSEC / NSEC3 negative proofs → Insecure delegation classification | wire `Result.InsecureAt` / `InsecureReason` into Signals |
 | Week 5 | Leaf NSEC / NSEC3 negative proofs (SecureNoData / SecureNXDomain), CNAME / DNAME chasing with worst-of verdict | wire `Result.NegativeReason` and `Result.Aliases` into Signals |
+| Week 6 | Wildcard-synthesised positive answers — digest target reconstruction + next-closer non-existence proof, `Result.Wildcard` field | wire `Result.Wildcard` into Signals |
 
 Week 1 actuals: `types/` and `wire/` shipped with tests at 100% line
 coverage.
@@ -196,6 +197,31 @@ Week 4 actuals:
     proof flips the verdict to `SecureNoData` or `SecureNXDomain`
     with details in the new `Result.NegativeReason` field.
     Coverage 83.1%.
+
+Week 6 actuals:
+
+- `dnssec/` — wildcard-aware digest target.
+  - New canonical-name helpers `LabelCount(name)` and
+    `LastNLabels(name, n)`.
+  - `Zone.CreateDigestTarget` detects synthesis by comparing
+    `rrsig.Labels` against `LabelCount(name)`. When fewer, it
+    reconstructs the wildcard owner `*. + last-N-labels(name)` for
+    the per-RR header instead of using the literal owner. This
+    keeps wildcard handling internal to the dnssec layer; callers
+    (signers and validators alike) see correct digests transparently.
+- `verifier/wildcard.go` — synthesis detection and non-existence proof.
+  - `detectWildcard(z, qname, qtype)` inspects RRSIGs at (qname,
+    qtype). When `Labels < LabelCount(qname)` it returns a
+    `WildcardInfo` describing the reconstructed wildcard owner,
+    closest encloser, and next-closer name.
+  - `proveQnameNonExistence(z, nextCloser)` accepts an NSEC whose
+    range covers nextCloser or an NSEC3 whose range covers
+    H(nextCloser); both must be signature-verified.
+  - `resolveLeaf` after a successful positive verification: if
+    detection fires AND non-existence proof succeeds, the verdict
+    stays Secure with `Result.Wildcard` populated; otherwise the
+    hop turns Bogus with a reason naming the missing proof.
+  Coverage 82.6%.
 
 Week 5 actuals:
 

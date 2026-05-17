@@ -48,6 +48,31 @@ type Result struct {
 	// directly. The terminal qname is the From field of the last
 	// step's target, NOT a step itself.
 	Aliases []AliasStep `json:"aliases,omitempty"`
+
+	// Wildcard is non-nil when the terminal positive answer was
+	// produced by wildcard expansion (RFC 4035 §5.3.4). Carries the
+	// reconstructed wildcard owner, the closest encloser, the
+	// next-closer name whose non-existence was proven, and the proof
+	// source. The verdict on a properly-proven wildcard remains
+	// [VerdictSecure]; consumers that need to distinguish "real
+	// rrset" from "wildcard-synthesised rrset" check this field.
+	Wildcard *WildcardInfo `json:"wildcard,omitempty"`
+}
+
+// WildcardInfo describes a wildcard-synthesised positive answer.
+//
+// Source is the reconstructed wildcard owner the validator used for
+// digest computation (e.g. "*.example.com."). ClosestEncloser is the
+// deepest ancestor of the qname that exists in the zone (the same
+// labels that, prefixed with "*.", form the wildcard owner).
+// NextCloser is the closest-encloser's child along qname's path —
+// the name whose non-existence the validator just proved via NSEC or
+// NSEC3.
+type WildcardInfo struct {
+	Source          string `json:"source"`
+	ClosestEncloser string `json:"closestEncloser"`
+	NextCloser      string `json:"nextCloser"`
+	ProofReason     string `json:"proofReason"`
 }
 
 // AliasStep records one CNAME or DNAME hop encountered during
