@@ -4,6 +4,32 @@ All notable changes to dnsdata-go are recorded here. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- `dnssec/` — NSEC / NSEC3 negative-proof primitives.
+  - `CompareCanonicalNames` / `EqualCanonicalNames` (RFC 4034 §6.1
+    canonical name comparator with wrap-around-safe ordering).
+  - `NSEC.MatchesName` / `NSEC.CoversName` / `NSEC.ProvesNoDS`.
+  - `NSEC3.HasOptOut` / `NSEC3.CoversHash` / `NSEC3.ProvesNoDS`, plus
+    `OwnerHashFromName` for decoding the leftmost base32hex label of
+    an NSEC3 owner.
+- `verifier/` — Insecure-delegation classification.
+  - `descendInto` now consults the parent zone's NSEC / NSEC3 records
+    when DS is absent: a valid proof flips the verdict to
+    `Insecure` and records the proof source in the new
+    `Result.InsecureReason` field. Supported proof shapes are matching
+    NSEC, matching NSEC3, and covering NSEC3 with opt-out
+    (RFC 5155 §6).
+- `Result.InsecureReason` (`string`, JSON-omitempty).
+
+### Changed
+
+- `verifier/doc.go` "Out of scope" list no longer includes the no-DS
+  proof case. NODATA / NXDOMAIN proofs at the leaf remain out of
+  scope.
+
 ## [0.1.0] — Initial release
 
 End-to-end DNSSEC chain validation in pure Go, no external DNS

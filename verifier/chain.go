@@ -128,15 +128,22 @@ const (
 // verify the DNSKEY rrset for childName, returning the new child
 // dnssec.Zone if successful.
 //
-// In v0.1.0 the distinction between Insecure (proven no DS) and
-// NoCut (just no records) is collapsed; both produce NoCut. Proper
-// NSEC proof handling is tracked separately.
+// When the parent returns no DS records, descendInto inspects the
+// same response for an NSEC / NSEC3 proof of no-DS. A valid proof
+// classifies childName as an Insecure delegation; absence of proof
+// keeps the previous "treat as NoCut" behaviour so existing callers
+// that ask for DS at a non-zone-cut name (e.g. qname itself) still
+// proceed to leaf resolution.
 func (v *Verifier) descendInto(ctx context.Context, parentZone *dnssec.Zone, parentName, childName string, result *Result) (*dnssec.Zone, *dnssec.DNSKey, descendStatus, error) {
 	dsCount, err := v.loadRecords(ctx, parentZone, childName, types.TypeDS, result)
 	if err != nil {
 		return nil, nil, descendBogus, err
 	}
 	if dsCount == 0 {
+		if proven, reason := v.proveNoDS(parentZone, childName); proven {
+			result.InsecureReason = reason
+			return nil, nil, descendInsecure, nil
+		}
 		return nil, nil, descendNoCut, nil
 	}
 

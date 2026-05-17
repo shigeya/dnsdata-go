@@ -116,6 +116,7 @@ Mirror of the schedule table in mailsec-probe `DESIGN.md §16`.
 | Week 1 | repo bootstrap; minimal `types/`, `wire/` + tests (`zone/` slipped to Week 2) | (none) |
 | Week 2 | `zone/`, full `dnssec/` (DNSKEY/RRSIG/DS/NSEC/NSEC3/anchors + chain ops), `resolver/doh/` | (none) |
 | Week 3 | `verifier/chain.go` (chain walker), `resolver/auth/`, `v0.1.0` tag | implement `--dnssec-mode validate`, swap in `internal/probe/dnssec/`, regenerate goldens |
+| Week 4 | NSEC / NSEC3 negative proofs → Insecure delegation classification | wire `Result.InsecureAt` / `InsecureReason` into Signals |
 
 Week 1 actuals: `types/` and `wire/` shipped with tests at 100% line
 coverage.
@@ -161,8 +162,32 @@ Week 3 actuals:
   context deadline. Same `Resolve` adapter shape as DoH so either
   transport drops into `verifier`. Coverage 83.5%.
 
+Week 4 actuals:
+
+- `dnssec/` — RFC 4034 §6.1 canonical name comparator
+  (`CompareCanonicalNames` / `EqualCanonicalNames`); `NSEC.MatchesName`,
+  `NSEC.CoversName` (with wrap-around at the zone-trailing record),
+  `NSEC.ProvesNoDS`; `NSEC3.CoversHash`, `NSEC3.HasOptOut`,
+  `NSEC3.ProvesNoDS`, plus `OwnerHashFromName` that decodes the
+  leftmost base32hex label of an NSEC3 owner name. Coverage 81.2%.
+- `verifier/negative.go` — `proveNoDS(parent, childName)` searches
+  parent for a matching NSEC, a matching NSEC3 (hash equals
+  H(childName)), or an opt-out NSEC3 covering H(childName); each
+  candidate is signature-verified against the parent's keys before
+  accepting the proof.
+- `verifier/chain.go::descendInto` — when `dsCount == 0`, calls
+  `proveNoDS`. A successful proof returns `descendInsecure`, sets
+  `Result.InsecureAt = childName`, and records the proof source in
+  the new `Result.InsecureReason` field. Absence of proof preserves
+  the pre-existing `descendNoCut` semantics so existing callers that
+  ask for DS at a non-cut name (e.g. qname itself) still proceed to
+  leaf resolution.
+
 UP-001 (chain validator), UP-002 (parser + RData decoders), and
 UP-003 (auth resolver) document the new public surface for
-dnsdata-js port-back in `UPSTREAM_FEEDBACK.md`.
+dnsdata-js port-back in `UPSTREAM_FEEDBACK.md`. UP-004 covers the
+NSEC / NSEC3 proof primitives — these are new in dnsdata-go (no TS
+equivalent existed) and are first candidates for forward-port into
+dnsdata-js when negative-proof support lands there.
 
 Session handoff and ongoing notes live in `CLAUDE.md`.

@@ -142,6 +142,69 @@ func (n *NSEC) CoversType(t uint16) bool {
 	return false
 }
 
+// MatchesName reports whether qname is equal to owner in DNSSEC
+// canonical name order (RFC 4034 §6.1).
+//
+// owner is the NSEC RR's owner name. It is passed explicitly because
+// [ParseNSEC] is allowed to receive a nil [zone.ResourceRecord] and the
+// handler does not otherwise retain its owner.
+func (n *NSEC) MatchesName(owner, qname string) bool {
+	return EqualCanonicalNames(owner, qname)
+}
+
+// CoversName reports whether qname falls strictly between owner and
+// n.NextDomain in canonical order (RFC 4035 §5.4 "covers"). Equal to
+// either endpoint returns false: a match is not a cover, and an NSEC
+// only proves non-existence of names strictly inside its range.
+//
+// The "wrap" case where NextDomain <= owner in canonical order is
+// recognised as the zone-trailing NSEC and accepted: qname is covered
+// if it is greater than owner OR less than NextDomain.
+func (n *NSEC) CoversName(owner, qname string) bool {
+	if n == nil {
+		return false
+	}
+	cmpOwner := CompareCanonicalNames(qname, owner)
+	cmpNext := CompareCanonicalNames(qname, n.NextDomain)
+	if cmpOwner == 0 || cmpNext == 0 {
+		return false
+	}
+	if CompareCanonicalNames(n.NextDomain, owner) <= 0 {
+		// Wrap-around NSEC at the zone end.
+		return cmpOwner > 0 || cmpNext < 0
+	}
+	return cmpOwner > 0 && cmpNext < 0
+}
+
+// ProvesNoDS reports whether n's type bitmap matches the shape of a
+// "no-DS, signed delegation" NSEC at the parent: NS bit present, DS bit
+// absent, and SOA bit absent. The presence of SOA would mean this is
+// actually a zone apex NSEC, not a delegation point, and the absence of
+// NS would mean the parent never delegated at all.
+//
+// Callers must additionally verify that this NSEC's owner equals the
+// delegated child name (matching denial), or that its range covers the
+// child name (covering denial); ProvesNoDS only inspects the bitmap.
+func (n *NSEC) ProvesNoDS() bool {
+	if n == nil {
+		return false
+	}
+	hasNS := false
+	hasDS := false
+	hasSOA := false
+	for _, t := range n.CoveredTypes {
+		switch t {
+		case types.TypeNS:
+			hasNS = true
+		case types.TypeDS:
+			hasDS = true
+		case types.TypeSOA:
+			hasSOA = true
+		}
+	}
+	return hasNS && !hasDS && !hasSOA
+}
+
 // WireBody emits `rdlen(2) + next_domain_wire + type_bitmap`.
 func (n *NSEC) WireBody(b *wire.Builder) error {
 	nextWire, err := wire.DomainNameToWire(n.NextDomain)

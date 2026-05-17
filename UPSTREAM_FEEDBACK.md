@@ -40,6 +40,7 @@ UF status legend:
 | [UP-001](#up-001) | DNSSEC chain validator with pluggable Resolver, four-state Verdict, and JSON-friendly Result | `verifier/` | proposed |
 | [UP-002](#up-002) | DNS message wire-format parser + RDATA-to-presentation decoders, kept in `wire/` so packages stay acyclic | `wire/message.go`, `wire/rdata.go`, `wire/name_decompress.go` | proposed |
 | [UP-003](#up-003) | UDP+TCP authoritative-DNS client with TC-flag fallback and multi-server failover, sharing the EDNS / DO query builder with the DoH client | `resolver/auth/` | proposed |
+| [UP-004](#up-004) | NSEC / NSEC3 negative-proof primitives + Insecure-delegation classification (canonical-name compare, CoversName / CoversHash, ProvesNoDS, opt-out support) | `dnssec/canon.go`, `dnssec/nsec.go`, `dnssec/nsec3.go`, `verifier/negative.go` | proposed |
 
 UP status legend:
 
@@ -487,6 +488,105 @@ func NormalizeAddr(addr string) string
   TCP for the deadline path.
 
 **Status.** Ships in dnsdata-go v0.1.0 (Week 3). Awaiting an issue on
+dnsdata-js to track the TS port.
+
+---
+
+## UP-004
+
+NSEC / NSEC3 negative-proof primitives, plus the verifier-side wiring
+that lifts a "no-DS at delegation" response from `descendNoCut` (silent
+fall-through) to a real `VerdictInsecure` with a labelled reason.
+
+**Go source.** `dnssec/canon.go`, `dnssec/nsec.go` (CoversName /
+MatchesName / ProvesNoDS), `dnssec/nsec3.go` (CoversHash / HasOptOut /
+ProvesNoDS / OwnerHashFromName), `verifier/negative.go`,
+`verifier/chain.go::descendInto`, `verifier/result.go::InsecureReason`.
+
+**Public API.**
+
+```go
+// dnssec/canon.go
+func CompareCanonicalNames(a, b string) int    // RFC 4034 §6.1
+func EqualCanonicalNames(a, b string) bool
+
+// dnssec/nsec.go
+func (n *NSEC) MatchesName(owner, qname string) bool
+func (n *NSEC) CoversName(owner, qname string) bool    // strict (open) range
+func (n *NSEC) ProvesNoDS() bool                       // NS && !DS && !SOA
+
+// dnssec/nsec3.go
+func (n *NSEC3) HasOptOut() bool
+func (n *NSEC3) CoversHash(ownerHash, target []byte) bool
+func (n *NSEC3) ProvesNoDS() bool
+func OwnerHashFromName(owner string) ([]byte, error)
+
+// verifier/result.go
+type Result struct {
+    // ... existing fields ...
+    InsecureReason string `json:"insecureReason,omitempty"`
+}
+```
+
+**Design decisions.**
+
+1. **Primitive split, not a single big proof function.** The dnssec
+   package exports only the small "does this NSEC/NSEC3 cover / match /
+   look like no-DS" questions. The verifier composes them into a proof
+   in `verifier/negative.go::proveNoDS`. This keeps `dnssec/` free of
+   any chain-walker semantics, and lets future no-DATA / NXDOMAIN
+   proof helpers reuse the same primitives.
+2. **Canonical order treats trailing dot as decoration.** RFC 4034
+   §6.1 leaves the choice of FQDN representation to implementations.
+   We strip a trailing `.` before splitting on `.`, so `"com"` and
+   `"com."` compare equal and the root sorts strictly lowest.
+3. **Wrap-around NSEC / NSEC3.** Both `NSEC.CoversName` and
+   `NSEC3.CoversHash` recognise the zone-trailing record (where
+   next <= owner) and accept "either greater than owner OR less than
+   next" as a valid cover. Tests pin this behaviour against both the
+   normal and wrap cases.
+4. **Bitmap "no-DS shape" requires NS and forbids both DS and SOA.**
+   Forbidding SOA distinguishes a delegation point from a zone apex
+   NSEC. Forbidding DS is the literal proof statement. Requiring NS
+   guards against accidentally accepting an NSEC at a name the parent
+   never delegated.
+5. **Opt-out NSEC3 is honoured.** `proveNoDSWithNSEC3` first searches
+   for a matching NSEC3 (owner-hash == H(childName)); if none, it
+   re-walks looking for an NSEC3 that has the opt-out flag *and*
+   covers H(childName). This makes proof discovery cheap in the
+   common case while still supporting RFC 5155 §6 opt-out chains.
+6. **Each candidate proof is signature-verified.** A bogus parent
+   could otherwise insert an unsigned NSEC and lie about the bitmap.
+   `parent.VerifyRRSet(owner, NSEC|NSEC3, KeyModeNone, "")` runs once
+   per accepted candidate; if it fails the candidate is skipped, not
+   reported as an error, so the chain walker falls through to its
+   pre-existing "no proof" behaviour.
+7. **`proveNoDS` returns (bool, string), never an error.** A failed
+   proof is a classification outcome, not a runtime failure: the
+   verifier's job is to *try* to prove no-DS and quietly give up if
+   it can't. The string carries the proof source for `InsecureReason`.
+8. **Chain walker stays backwards-compatible.** When proof is absent,
+   `descendInto` keeps returning `descendNoCut` — so existing callers
+   that ask for DS at a name that isn't a zone cut (most importantly
+   qname itself in `Validate`) still proceed correctly to the leaf
+   resolution step.
+
+**TS migration notes.**
+
+- TS already has `NSEC` and `NSEC3` types in `dnssec_rr.ts` with
+  `covers_type` predicates. The new methods translate cleanly into
+  member functions; canonical-name compare belongs in
+  `dnssec_util.ts` or alongside the bitmap helpers.
+- TS lacks a chain validator today (UP-001), so `proveNoDS` will land
+  there at the same time. Until then the dnssec/ primitives can ship
+  independently and be unit-tested with the same fixtures.
+- Base32hex decoding already exists for the NSEC3 next-hashed-owner
+  field; `ownerHashFromName` reuses the same routine on the leftmost
+  label.
+- `bytes.Compare` on hashes maps to a `Uint8Array` byte-wise compare
+  loop in TS (no built-in lexicographic comparator for typed arrays).
+
+**Status.** Ships in dnsdata-go v0.2.0 (Week 4). Awaiting an issue on
 dnsdata-js to track the TS port.
 
 ---

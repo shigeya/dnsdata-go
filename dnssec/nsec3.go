@@ -1,6 +1,7 @@
 package dnssec
 
 import (
+	"bytes"
 	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
@@ -92,6 +93,83 @@ func (n *NSEC3) CoversType(t uint16) bool {
 	}
 	return false
 }
+
+// nsec3OptOutFlag is bit 0 of the NSEC3 Flags field (RFC 5155 §3.1.2.1).
+const nsec3OptOutFlag uint8 = 0x01
+
+// HasOptOut reports whether the NSEC3 opt-out flag is set
+// (RFC 5155 §6 — when set, the NSEC3 may safely omit insecure
+// delegations from its [owner, next) range).
+func (n *NSEC3) HasOptOut() bool {
+	if n == nil {
+		return false
+	}
+	return n.Flags&nsec3OptOutFlag != 0
+}
+
+// OwnerHashFromName decodes the leftmost label of an NSEC3 owner name
+// as base32hex (RFC 5155 §1.3). For owner "ABCD0123.example.com." this
+// returns the raw hash bytes encoded in "ABCD0123".
+func OwnerHashFromName(owner string) ([]byte, error) {
+	cleaned := strings.TrimSuffix(owner, ".")
+	if cleaned == "" {
+		return nil, fmt.Errorf("%w: NSEC3 owner is empty", ErrPresentationFormat)
+	}
+	label, _, _ := strings.Cut(cleaned, ".")
+	if label == "" {
+		return nil, fmt.Errorf("%w: NSEC3 owner has no leftmost label: %q", ErrPresentationFormat, owner)
+	}
+	return base32HexDecode(label)
+}
+
+// CoversHash reports whether target falls strictly between ownerHash
+// and n.NextHashedOwner in NSEC3 sort order (RFC 5155 §6.1: byte-wise
+// numeric order on the hash output).
+//
+// Equal to either endpoint returns false: matching denial is a
+// separate concept from covering denial.
+//
+// The wrap case where NextHashedOwner <= ownerHash is treated as the
+// zone-trailing NSEC3 and handled symmetrically with [NSEC.CoversName].
+func (n *NSEC3) CoversHash(ownerHash, target []byte) bool {
+	if n == nil {
+		return false
+	}
+	cmpOwner := bytes.Compare(target, ownerHash)
+	cmpNext := bytes.Compare(target, n.NextHashedOwner)
+	if cmpOwner == 0 || cmpNext == 0 {
+		return false
+	}
+	if bytes.Compare(n.NextHashedOwner, ownerHash) <= 0 {
+		return cmpOwner > 0 || cmpNext < 0
+	}
+	return cmpOwner > 0 && cmpNext < 0
+}
+
+// ProvesNoDS reports whether n's type bitmap has the shape of a signed
+// no-DS delegation (NS present, DS absent, SOA absent). Like its NSEC
+// counterpart, this is bitmap-only — the caller must additionally
+// confirm n is a matching or covering NSEC3 for the child name.
+func (n *NSEC3) ProvesNoDS() bool {
+	if n == nil {
+		return false
+	}
+	hasNS := false
+	hasDS := false
+	hasSOA := false
+	for _, t := range n.CoveredTypes {
+		switch t {
+		case types.TypeNS:
+			hasNS = true
+		case types.TypeDS:
+			hasDS = true
+		case types.TypeSOA:
+			hasSOA = true
+		}
+	}
+	return hasNS && !hasDS && !hasSOA
+}
+
 
 // ComputeNSEC3Hash hashes name per RFC 5155 §5 with the given salt and
 // iteration count.
