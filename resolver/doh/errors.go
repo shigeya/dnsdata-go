@@ -26,7 +26,4 @@ var (
 	// with a Content-Type other than `application/dns-message`.
 	ErrUnexpectedContentType = errors.New("doh: unexpected content type")
 
-	// ErrInvalidQName indicates the caller-supplied query name failed
-	// wire encoding (oversized labels, etc.).
-	ErrInvalidQName = errors.New("doh: invalid qname")
 )

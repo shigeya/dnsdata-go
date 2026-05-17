@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/shigeya/dnsdata-go/wire"
 )
 
 // Default DoH provider endpoints, used in the order shown when
@@ -92,7 +94,7 @@ func (c *Client) Providers() []string {
 // bit set. The response is the raw DNS message bytes from the first
 // provider that succeeds.
 func (c *Client) Query(ctx context.Context, qname string, qtype uint16) ([]byte, error) {
-	query, err := BuildQuery(qname, qtype)
+	query, err := wire.BuildQuery(qname, qtype)
 	if err != nil {
 		return nil, err
 	}

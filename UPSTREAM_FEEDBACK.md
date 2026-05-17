@@ -39,6 +39,7 @@ UF status legend:
 |---|---|---|---|
 | [UP-001](#up-001) | DNSSEC chain validator with pluggable Resolver, four-state Verdict, and JSON-friendly Result | `verifier/` | proposed |
 | [UP-002](#up-002) | DNS message wire-format parser + RDATA-to-presentation decoders, kept in `wire/` so packages stay acyclic | `wire/message.go`, `wire/rdata.go`, `wire/name_decompress.go` | proposed |
+| [UP-003](#up-003) | UDP+TCP authoritative-DNS client with TC-flag fallback and multi-server failover, sharing the EDNS / DO query builder with the DoH client | `resolver/auth/` | proposed |
 
 UP status legend:
 
@@ -397,6 +398,93 @@ SOA, SRV, CAA, DNSKEY, CDNSKEY, DS, CDS, RRSIG, NSEC, NSEC3, NSEC3PARAM.
 - Decompression: the pointer chase is iterative with cycle detection. A
   recursive implementation in TS would also need the same hop cap; pick 32
   to match.
+
+**Status.** Ships in dnsdata-go v0.1.0 (Week 3). Awaiting an issue on
+dnsdata-js to track the TS port.
+
+---
+
+## UP-003
+
+### UDP / TCP authoritative-DNS client
+
+**Go source:** `resolver/auth/` (`doc.go`, `errors.go`, `client.go`,
+`resolve.go`). Tests in `client_test.go`. Builds on `wire.BuildQuery` /
+`wire.ParseMessage` / `wire.RDataToString` shared with `resolver/doh`.
+
+**What it adds.** A plain-DNS (RFC 1035) client for use against
+authoritative name servers, recursive resolvers, or a local stub.
+Mirrors `resolver/doh` in shape (Client + Options + Resolve method
+satisfying `verifier.Resolver`), differing only in transport.
+
+**Public API surface.**
+
+```go
+type Client struct{ /* opaque */ }
+
+func NewClient(opts ...Option) *Client
+func (c *Client) Query(ctx context.Context, qname string, qtype uint16) ([]byte, error)
+func (c *Client) QueryRaw(ctx context.Context, queryID uint16, query []byte) ([]byte, error)
+func (c *Client) Resolve(ctx context.Context, name string, qtype uint16) ([]*zone.ResourceRecord, error)
+func (c *Client) Servers() []string
+
+type Option func(*Client)
+func WithServers(addrs ...string) Option
+func WithTimeout(d time.Duration) Option
+func WithUDPBufferSize(n int) Option
+func WithDialer(d net.Dialer) Option
+
+func NormalizeAddr(addr string) string
+```
+
+**Design decisions worth carrying back to TS.**
+
+1. **UDP first, TCP on truncation.** When the UDP response has the TC
+   flag set (RFC 1035 §4.2.1) the client replays the same query over
+   TCP transparently. The 2-byte big-endian length prefix on the wire
+   (RFC 1035 §4.2.2) is handled here. TS does this via the `dgram`
+   and `net` modules; the framing logic ports straight across.
+2. **Caller supplies the server list — no `/etc/resolv.conf` reads.**
+   `auth.WithServers("1.1.1.1:53", "8.8.8.8:53")` is the only way to
+   point the client. `NormalizeAddr` appends the default :53 port
+   when missing. Per DESIGN.md MUST 9 this is a hard requirement so
+   mailsec-probe's `--dns-server <ip>` round-trips cleanly without
+   accidental fall-back to the system resolver.
+3. **Shared query builder.** `wire.BuildQuery` / `BuildQueryWithID`
+   construct the EDNS(0) / DO-bit query message; both `doh.Client`
+   and `auth.Client` call it. In TS the equivalent factoring is to
+   keep the query builder in `dns_wire.ts` next to the wire codec.
+4. **Per-server fail-over with `errors.Join`.** Same approach as DoH:
+   `ErrAllServersFailed` is joined with the first inner error so
+   `errors.Is` against the inner sentinel still resolves.
+5. **Transaction-ID validation.** The response's ID is compared with
+   the query's; mismatches return `ErrIDMismatch`. This is a thin
+   safety net against trivial off-path responses on shared UDP
+   sockets — useful when the caller passes the same `Client` to
+   multiple goroutines (each goroutine still gets its own random ID
+   via `RandomQueryID`).
+6. **`Dialer` injection for tests.** `WithDialer` lets tests swap in
+   a controlled `net.Dialer`; the production default uses
+   `net.Dialer{}`. TS can structure the same way with a small
+   `Dialer` interface and a default implementation backed by the
+   stdlib `dgram` / `net` modules.
+7. **Method value satisfies `verifier.Resolver`.** Just like the DoH
+   adapter, the wiring is `verifier.ResolverFunc(c.Resolve)`. No
+   shim package is needed.
+8. **Per-server timeout vs per-call deadline.** `WithTimeout` is the
+   per-server budget; the caller's `context.Deadline` shrinks the
+   effective budget if it's tighter. This keeps the failover loop
+   responsive without forcing every caller to set a context deadline.
+
+**TS migration notes.**
+
+- Node's `dgram.createSocket('udp4')` and `net.createConnection()` map
+  to the Go `net.Dialer.DialContext("udp" / "tcp", addr)` calls.
+- TCP length-prefix framing is identical (2-byte big-endian); reuse
+  the same `Buffer` slice arithmetic that DoH callers already use.
+- `AbortSignal` propagates the cancel just like `ctx` does in Go;
+  hook it into `socket.close()` on UDP and `connection.destroy()` on
+  TCP for the deadline path.
 
 **Status.** Ships in dnsdata-go v0.1.0 (Week 3). Awaiting an issue on
 dnsdata-js to track the TS port.

@@ -1,4 +1,4 @@
-package doh
+package wire
 
 import (
 	"encoding/binary"
@@ -10,9 +10,9 @@ import (
 )
 
 func TestBuildQuery_HeaderLayout(t *testing.T) {
-	msg, err := buildQueryWithID(0x4242, "example.com.", types.TypeA)
+	msg, err := BuildQueryWithID(0x4242, "example.com.", types.TypeA)
 	if err != nil {
-		t.Fatalf("buildQueryWithID: %v", err)
+		t.Fatalf("BuildQueryWithID: %v", err)
 	}
 	if len(msg) < 12 {
 		t.Fatalf("message too short: %d bytes", len(msg))
@@ -42,12 +42,10 @@ func TestBuildQuery_HeaderLayout(t *testing.T) {
 }
 
 func TestBuildQuery_QuestionAndOPT(t *testing.T) {
-	msg, err := buildQueryWithID(0x1234, "example.com.", types.TypeDNSKEY)
+	msg, err := BuildQueryWithID(0x1234, "example.com.", types.TypeDNSKEY)
 	if err != nil {
-		t.Fatalf("buildQueryWithID: %v", err)
+		t.Fatalf("BuildQueryWithID: %v", err)
 	}
-	// Header is 12 bytes; question follows.
-	// example.com. encodes as \x07example\x03com\x00 (13 bytes).
 	qstart := 12
 	wantName := []byte{
 		7, 'e', 'x', 'a', 'm', 'p', 'l', 'e',
@@ -69,7 +67,6 @@ func TestBuildQuery_QuestionAndOPT(t *testing.T) {
 		t.Errorf("QCLASS = %d, want %d", qclass, types.ClassIN)
 	}
 
-	// OPT pseudo-RR: root name (0x00) + type 41 + class 4096 + TTL 0x8000_0000 + RDLEN 0
 	optStart := off + 4
 	if msg[optStart] != 0x00 {
 		t.Errorf("OPT name byte = 0x%02x, want 0x00 (root)", msg[optStart])
@@ -93,14 +90,13 @@ func TestBuildQuery_QuestionAndOPT(t *testing.T) {
 }
 
 func TestBuildQuery_AcceptsNonFQDN(t *testing.T) {
-	// Trailing dot should be auto-appended.
-	msg1, err := buildQueryWithID(1, "example.com", types.TypeA)
+	msg1, err := BuildQueryWithID(1, "example.com", types.TypeA)
 	if err != nil {
-		t.Fatalf("buildQueryWithID(no dot): %v", err)
+		t.Fatalf("BuildQueryWithID(no dot): %v", err)
 	}
-	msg2, err := buildQueryWithID(1, "example.com.", types.TypeA)
+	msg2, err := BuildQueryWithID(1, "example.com.", types.TypeA)
 	if err != nil {
-		t.Fatalf("buildQueryWithID(dot): %v", err)
+		t.Fatalf("BuildQueryWithID(dot): %v", err)
 	}
 	if len(msg1) != len(msg2) {
 		t.Errorf("lengths differ: %d vs %d", len(msg1), len(msg2))
@@ -116,8 +112,6 @@ func TestBuildQuery_RejectsInvalidLabel(t *testing.T) {
 }
 
 func TestBuildQuery_RandomIDsDiffer(t *testing.T) {
-	// Probabilistic: two consecutive BuildQuery calls should almost
-	// certainly draw different IDs. Failure rate is 1/65536.
 	a, err := BuildQuery("example.com.", types.TypeA)
 	if err != nil {
 		t.Fatalf("BuildQuery(a): %v", err)
@@ -129,6 +123,6 @@ func TestBuildQuery_RandomIDsDiffer(t *testing.T) {
 	idA := binary.BigEndian.Uint16(a[0:2])
 	idB := binary.BigEndian.Uint16(b[0:2])
 	if idA == idB {
-		t.Logf("ID collision (1/65536): %#x", idA) // not a hard failure
+		t.Logf("ID collision (1/65536): %#x", idA)
 	}
 }

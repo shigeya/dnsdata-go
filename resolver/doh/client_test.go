@@ -13,6 +13,7 @@ import (
 
 	"github.com/shigeya/dnsdata-go/resolver/doh"
 	"github.com/shigeya/dnsdata-go/types"
+	"github.com/shigeya/dnsdata-go/wire"
 )
 
 // stubResponse is what the mock server returns on success. The bytes
@@ -141,8 +142,8 @@ func TestClient_Query_InvalidQName(t *testing.T) {
 	c := newClient(doh.WithProviders(url))
 	tooLong := strings.Repeat("a", 70)
 	_, err := c.Query(context.Background(), tooLong+".example.com.", types.TypeA)
-	if !errors.Is(err, doh.ErrInvalidQName) {
-		t.Errorf("err = %v, want ErrInvalidQName wrapped", err)
+	if !errors.Is(err, wire.ErrInvalidQName) {
+		t.Errorf("err = %v, want wire.ErrInvalidQName wrapped", err)
 	}
 }
 
