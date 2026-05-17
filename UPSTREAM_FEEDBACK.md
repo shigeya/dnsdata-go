@@ -38,6 +38,7 @@ UF status legend:
 | ID | Description | dnsdata-go source | Status |
 |---|---|---|---|
 | [UP-001](#up-001) | DNSSEC chain validator with pluggable Resolver, four-state Verdict, and JSON-friendly Result | `verifier/` | proposed |
+| [UP-002](#up-002) | DNS message wire-format parser + RDATA-to-presentation decoders, kept in `wire/` so packages stay acyclic | `wire/message.go`, `wire/rdata.go`, `wire/name_decompress.go` | proposed |
 
 UP status legend:
 
@@ -293,6 +294,109 @@ type Result struct {
 - Test fixtures: the Go side builds three signed `dnssec.Zone` instances in
   memory and threads them through a mock Resolver. TS can do the same once
   `dnssec_zone.ts`'s `sign_rr` method gains a Resolver-shaped consumer.
+
+**Status.** Ships in dnsdata-go v0.1.0 (Week 3). Awaiting an issue on
+dnsdata-js to track the TS port.
+
+---
+
+## UP-002
+
+### DNS message wire-format parser + RDATA presentation decoders
+
+**Go source:** `wire/name_decompress.go`, `wire/message.go`, `wire/rdata.go`.
+Tests: `wire/name_decompress_test.go`, `wire/message_test.go`,
+`wire/rdata_coverage_test.go`.
+
+**What it adds.** A low-level decoder that turns DNS response bytes into a
+structured [RawMessage] (header + question + answer/authority/additional
+sections of RawRR), plus an `RDataToString` that converts the wire-form RDATA
+of any of the common types back into the same presentation text that
+`zone.NewResourceRecord` and the DNSSEC handlers consume. Together they
+unblock real-network use of the chain validator (UP-001): the DoH client's
+new `Client.Resolve` method composes ParseMessage + RDataToString to produce
+`[]*zone.ResourceRecord` directly.
+
+**Public API surface.**
+
+```go
+// Names with compression pointers (RFC 1035 §4.1.4).
+func ParseDomainName(msg []byte, offset int) (string, int, error)
+
+// Header + Question + RawRR per section.
+type Header struct {
+    ID, Flags, QDCount, ANCount, NSCount, ARCount uint16
+}
+func (h Header) QR() bool
+func (h Header) AA() bool
+func (h Header) TC() bool
+func (h Header) RD() bool
+func (h Header) RA() bool
+func (h Header) AD() bool
+func (h Header) CD() bool
+func (h Header) RCode() uint8
+
+type Question struct{ Name string; Type, Class uint16 }
+type RawRR struct{ Name string; Type, Class uint16; TTL uint32; RData []byte; RDataStart int }
+type RawMessage struct{ Raw []byte; Header Header; Question Question; Answer, Authority, Additional []RawRR }
+
+func ParseMessage(msg []byte) (*RawMessage, error)
+
+// Per-type RDATA decoder. Unknown types render in RFC 3597 §5 form.
+func RDataToString(msg []byte, rrtype uint16, rdata []byte, rdataStart int) (string, error)
+```
+
+Types handled by `RDataToString`: A, AAAA, NS, CNAME, PTR, DNAME, MX, TXT,
+SOA, SRV, CAA, DNSKEY, CDNSKEY, DS, CDS, RRSIG, NSEC, NSEC3, NSEC3PARAM.
+
+**Design decisions worth carrying back to TS.**
+
+1. **Decoder lives in `wire/`, with no dependency on `zone` / `dnssec`.**
+   This keeps the package graph acyclic: wire is the lowest layer, zone and
+   dnssec sit above it, and any "parse message → ResourceRecord" adapter
+   lives in a caller package (in Go: `resolver/doh.Client.Resolve`). In TS
+   the equivalent is to put the decoder in `dns_wire.ts` siblings rather
+   than inside `dns_zone.ts`.
+2. **Presentation text is the bridge.** RDATA decoders emit the same text
+   the zone-file format would use. That keeps the parser independent of the
+   handler registry: callers can re-parse with their existing
+   `ResourceRecord` machinery. The alternative (parser-knows-handlers)
+   couples wire to dnssec.
+3. **Names embedded in RDATA can be compressed.** `RDataToString` takes the
+   full message bytes plus `rdataStart` precisely so MX exchange, SOA
+   mname / rname, NS, RRSIG signer, and friends can follow pointers that
+   point outside the RDATA region. In TS the equivalent constraint is to
+   pass the whole `Uint8Array` and the absolute offset to the field decoder.
+4. **Compression-pointer safety in `ParseDomainName`.** Pointers must
+   strictly point earlier in the message (RFC 1035 §4.1.4), label-length
+   bytes ≥ 64 are rejected (the reserved 0x40 / 0x80 prefixes), and a hop
+   cap aborts pathological inputs. Hops are also tracked through a `visited`
+   set as belt-and-braces.
+5. **Unknown types use RFC 3597 §5 generic form.** `\# <rdlen> <hex>`.
+   Lets the decoder degrade safely for types the table doesn't know.
+6. **`RDataStart` on every `RawRR`.** Carrying the offset on the struct (in
+   addition to the byte slice) means callers don't need slice arithmetic to
+   recover where the RDATA lives. In TS the same role can be filled by an
+   `rdataOffset: number` field on the parsed RR.
+7. **`Client.Resolve` glue.** The DoH client gains a `Resolve(ctx, name,
+   qtype) → ([]*zone.ResourceRecord, error)` method that wraps `Query +
+   ParseMessage + RDataToString + zone.NewResourceRecord`. The Go
+   verifier.Resolver interface is satisfied via
+   `verifier.ResolverFunc(client.Resolve)` — no separate adapter type
+   needed.
+
+**TS migration notes.**
+
+- `Uint8Array` slices are reference views over an `ArrayBuffer`; record both
+  the slice and its offset explicitly (TS has no `unsafe.Pointer` to recover
+  it). The `RawRR` shape with `rdataOffset` is a natural fit.
+- Base32hex encode is included locally in `wire/rdata.go` because importing
+  `dnssec` from wire would cycle. TS does not have the same cycle constraint
+  (modules can be more freely organised), but factoring base32hex into its
+  own utility avoids re-implementing it in multiple places.
+- Decompression: the pointer chase is iterative with cycle detection. A
+  recursive implementation in TS would also need the same hop cap; pick 32
+  to match.
 
 **Status.** Ships in dnsdata-go v0.1.0 (Week 3). Awaiting an issue on
 dnsdata-js to track the TS port.
