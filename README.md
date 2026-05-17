@@ -13,15 +13,20 @@ wide-cpp-lib (C++) → dnsdata-js (TypeScript) → dnsdata-go (Go)   ← this re
 
 ## Status
 
-v0.1.0 — full end-to-end DNSSEC chain validation, both DoH and plain
-UDP / TCP transports. Pre-release: API surface may still change before
-v1.0. Primary consumer is
-[`mailsec-probe`](https://github.com/shigeya/mailsec-probe) Phase 3.0;
-co-designed with that consumer.
+v0.2.0 — full end-to-end DNSSEC chain validation with NSEC / NSEC3
+negative-proof support, CNAME / DNAME chasing, and wildcard-synthesised
+positive answer validation. Both DoH and plain UDP / TCP transports.
+Pre-release: API surface may still change before v1.0. Primary
+consumer is [`mailsec-probe`](https://github.com/shigeya/mailsec-probe)
+Phase 3.0; co-designed with that consumer.
 
-Out of scope for v0.1.0 (tracked in `verifier/doc.go`): NSEC / NSEC3
-negative proofs, CNAME / DNAME chasing, RFC 5011 trust-anchor rollover,
-DNSKEY / DS rrset caching.
+`Verdict` is six-state: `secure | secure-nodata | secure-nxdomain |
+insecure | bogus | indeterminate`. `Result` additionally exposes
+`Aliases` (CNAME / DNAME hops) and `Wildcard` (synthesis evidence)
+when applicable.
+
+Out of scope for v0.2.0 (tracked in `verifier/doc.go`): RFC 5011
+trust-anchor rollover, DNSKEY / DS rrset caching.
 
 ## Layout
 
