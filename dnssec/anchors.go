@@ -13,23 +13,28 @@ import (
 // Concrete errors wrap it so callers can match with [errors.Is].
 var ErrAnchors = errors.New("root anchors error")
 
-// DS is a delegation-signer record presented as a trust anchor.
+// AnchorDS is a delegation-signer entry in a trust-anchor document.
+//
+// It is the JSON-friendly counterpart to [DS] (the RR handler in
+// ds.go): KeyTag / Algorithm / DigestType match, but Digest is a
+// hex string here so the trust-anchor file remains human-readable.
 //
 // JSON field tags match the dnsdata-js on-disk format
 // (`~/.dnsdata/root-anchors.json`) so the same file can be shared
 // between Go and TypeScript sibling implementations.
-type DS struct {
+type AnchorDS struct {
 	KeyTag     uint16 `json:"keyTag"`
 	Algorithm  uint8  `json:"algorithm"`
 	DigestType uint8  `json:"digestType"`
 	Digest     string `json:"digest"` // upper-case hex
 }
 
-// DNSKEY is a DNSKEY record presented as a trust anchor. Currently
+// AnchorDNSKEY is a DNSKEY entry in a trust-anchor document. Currently
 // unused by the embedded built-in anchors (DNSKEY records for the root
 // are fetched live during chain validation), but exposed so caller-
-// supplied JSON can include them.
-type DNSKEY struct {
+// supplied JSON can include them. It is the JSON-friendly counterpart
+// to [DNSKey] (the RR handler in dnskey.go).
+type AnchorDNSKEY struct {
 	Flags     uint16 `json:"flags"`
 	Protocol  uint8  `json:"protocol"`
 	Algorithm uint8  `json:"algorithm"`
@@ -40,10 +45,10 @@ type DNSKEY struct {
 // is wire-compatible with `RootAnchors` in dnsdata-js so the two
 // implementations can read each other's `root-anchors.json`.
 type RootAnchors struct {
-	LastUpdated string   `json:"lastUpdated"`
-	Source      string   `json:"source"`
-	DS          []DS     `json:"ds"`
-	DNSKEYs     []DNSKEY `json:"dnskeys"`
+	LastUpdated string         `json:"lastUpdated"`
+	Source      string         `json:"source"`
+	DS          []AnchorDS     `json:"ds"`
+	DNSKEYs     []AnchorDNSKEY `json:"dnskeys"`
 }
 
 // Clone returns a deep copy of a — callers may mutate the result
@@ -57,10 +62,10 @@ func (a *RootAnchors) Clone() *RootAnchors {
 		Source:      a.Source,
 	}
 	if a.DS != nil {
-		out.DS = append([]DS(nil), a.DS...)
+		out.DS = append([]AnchorDS(nil), a.DS...)
 	}
 	if a.DNSKEYs != nil {
-		out.DNSKEYs = append([]DNSKEY(nil), a.DNSKEYs...)
+		out.DNSKEYs = append([]AnchorDNSKEY(nil), a.DNSKEYs...)
 	}
 	return out
 }
@@ -79,7 +84,7 @@ func (a *RootAnchors) Clone() *RootAnchors {
 var builtinRootAnchors = RootAnchors{
 	LastUpdated: "2024-11-05",
 	Source:      "builtin",
-	DS: []DS{
+	DS: []AnchorDS{
 		{
 			KeyTag:     20326,
 			Algorithm:  8, // RSASHA256
