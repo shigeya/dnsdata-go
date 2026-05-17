@@ -4,11 +4,21 @@ Items discovered while implementing dnsdata-go that **should be reflected back
 into dnsdata-js (TypeScript)**. The reverse-direction (Go → TS) feedback channel
 for co-design.
 
-Each item is intended to be transcribed into a dnsdata-js issue / PR /
-DESIGN.md change. Once an item reaches `fixed-upstream`, the corresponding
-Go-side deviation comment may be removed.
+There are two flavours of entry:
 
-## Summary
+- **UF-NNN — Feedback** items report bugs / robustness gaps / API-shape problems
+  in the existing TS source that the Go port had to deviate from. Once an item
+  reaches `fixed-upstream`, the corresponding Go-side deviation comment may be
+  removed.
+- **UP-NNN — Proposals** items describe **new functionality** the Go port
+  shipped that does **not** yet exist in TS. They are roadmap notes for porting
+  the new surface back, not bug reports. Status meanings are slightly different
+  for proposals (see legend below).
+
+Each item is intended to be transcribed into a dnsdata-js issue / PR /
+DESIGN.md change.
+
+## Summary — UF (feedback / fixes)
 
 | ID | Description | TS source | Type | Status |
 |---|---|---|---|---|
@@ -17,11 +27,23 @@ Go-side deviation comment may be removed.
 | [UF-003](#uf-003) | Unknown enum inputs throw bare `RangeError`; no typed classification | `dns_type_table.ts:18,31,59,86,…` | api-shape | pending |
 | [UF-004](#uf-004) | `ResourceRecord.get_wire_body` silently emits nothing when RDATA parse fails | `dns_zone.ts:175-295` | robustness | pending |
 
-Status legend:
+UF status legend:
 
 - `pending` — handled on the Go side; not yet addressed upstream
 - `filed` — issue / PR opened against dnsdata-js
 - `fixed-upstream` — landed in dnsdata-js; Go-side deviation note can be removed
+
+## Summary — UP (proposals / port-back)
+
+| ID | Description | dnsdata-go source | Status |
+|---|---|---|---|
+| [UP-001](#up-001) | DNSSEC chain validator with pluggable Resolver, four-state Verdict, and JSON-friendly Result | `verifier/` | proposed |
+
+UP status legend:
+
+- `proposed` — Go ships the functionality; TS port-back not started
+- `in-progress` — TS port underway (link the PR in the entry body)
+- `landed-upstream` — equivalent functionality merged in dnsdata-js
 
 ---
 
@@ -177,14 +199,124 @@ the easiest path.
 
 ---
 
+## UP-001
+
+### DNSSEC chain validator with pluggable Resolver
+
+**Go source:** `verifier/` (`doc.go`, `verdict.go`, `result.go`, `resolver.go`,
+`verifier.go`, `chain.go`, `errors.go`).
+
+**What it adds.** A self-contained chain-of-trust walker that takes a
+`(qname, qtype)` pair and produces a four-state `Verdict`
+(`Secure | Insecure | Bogus | Indeterminate`) along with the raw evidence
+(DS / DNSKEY / RRSIG presentation values) consumed during validation.
+
+**Public API surface.**
+
+```go
+type Verifier struct{ /* opaque */ }
+
+func NewVerifier(opts ...Option) (*Verifier, error)
+func (v *Verifier) Validate(ctx context.Context, qname string, qtype uint16) (*Result, error)
+
+type Option func(*Verifier)
+func WithResolver(Resolver) Option              // required
+func WithTrustAnchors(*dnssec.RootAnchors) Option
+func WithClock(func() time.Time) Option
+
+type Resolver interface {
+    Query(ctx context.Context, name string, qtype uint16) ([]*zone.ResourceRecord, error)
+}
+
+type Verdict uint8
+const (
+    VerdictIndeterminate Verdict = iota
+    VerdictSecure
+    VerdictInsecure
+    VerdictBogus
+)
+
+type Result struct {
+    Verdict     Verdict
+    Chain       []ZoneStep
+    InsecureAt  string
+    BogusAt     string
+    BogusReason string
+    Evidence    Evidence
+}
+```
+
+**Design decisions worth carrying back to TS.**
+
+1. **Resolver is an interface, not a concrete DoH client.** The walker is
+   transport-agnostic; backends include DoH, authoritative UDP/TCP, and
+   in-memory test fixtures. In TS the equivalent is an `interface Resolver`
+   accepting `(name, qtype) → Promise<ResourceRecord[]>`.
+2. **Four-state verdict with explicit Indeterminate.** RFC 4033 §5 names all
+   four; mailsec-probe expects them as the lower-case strings
+   `"secure"|"insecure"|"bogus"|"indeterminate"` (Result MarshalJSON enforces
+   this).
+3. **Trust anchors are caller-supplied, defaulting to the embedded built-in
+   set.** No filesystem reads from the package itself — the caller opens any
+   `~/.dnsdata/root-anchors.json` and hands it to `ReadAnchors` / passes the
+   resulting `*RootAnchors` to `WithTrustAnchors`. Mirrors DESIGN.md MUST NOT
+   23 ("no implicit filesystem writes / reads").
+4. **`context.Context` propagates cancel / deadline** through every Resolver
+   call. The TS port should use `AbortSignal` similarly so a single cancel
+   tears down the whole chain walk.
+5. **No init() side effects.** `NewVerifier` explicitly calls
+   `dnssec.RegisterHandlers()` as part of construction, instead of relying on
+   import-time registration. In TS, an equivalent `register_handlers()` call
+   should land in the constructor (or be documented as a one-time bootstrap).
+6. **Handler registration is global / package-level.** Multiple Verifiers can
+   coexist because handler registration is idempotent and read-only after
+   first call; per-Verifier registries are deferred (DESIGN.md §4 SHOULD #16
+   captures this as a future optimisation).
+7. **Evidence is presentation-form text, not parsed handlers.** Result is
+   JSON-serialisable out of the box (DESIGN.md MUST 10) without writing
+   custom marshallers for each handler type. TS can mirror this by storing
+   strings rather than DNSKey / RRSig instances.
+8. **Walker scope (v0.1.0).** Positive validation only. The following are
+   deliberately deferred and tracked in `doc.go`:
+   - NSEC / NSEC3 negative proofs (Insecure vs Bogus distinction at no-DS).
+   - CNAME / DNAME chasing.
+   - RFC 5011 trust-anchor rollover.
+   - DNSKEY / DS rrset caching across calls (DESIGN.md SHOULD #13).
+
+**TS migration notes.**
+
+- `context.Context` ↔ `AbortSignal`. `ctx.Err()` checks become
+  `signal.aborted` checks at the same yield points.
+- Crypto: Node's `crypto.verify(null, msg, pub, sig)` already covers Ed25519
+  and ECDSA; the RSA path needs `RSA-` prefixed hash strings (already used in
+  `dnssec_rr.ts`).
+- Test fixtures: the Go side builds three signed `dnssec.Zone` instances in
+  memory and threads them through a mock Resolver. TS can do the same once
+  `dnssec_zone.ts`'s `sign_rr` method gains a Resolver-shaped consumer.
+
+**Status.** Ships in dnsdata-go v0.1.0 (Week 3). Awaiting an issue on
+dnsdata-js to track the TS port.
+
+---
+
 ## Procedure for new entries
 
-When a new deviation is introduced:
+When a new deviation **from existing TS behaviour** is introduced:
 
 1. Append a new `UF-NNN` section to this file (numerically continuous).
-2. Add a row to the Summary table.
+2. Add a row to the "UF (feedback / fixes)" summary table.
 3. From the Go source / test that embodies the deviation, reference the ID
    (`// UPSTREAM_FEEDBACK.md UF-NNN`).
 4. As the item progresses to `filed` / `fixed-upstream`, update the table.
+
+When **new functionality** is shipped in Go that TS should also gain:
+
+1. Append a new `UP-NNN` section to this file (numerically continuous).
+2. Add a row to the "UP (proposals / port-back)" summary table.
+3. Cover, at minimum: the API surface (Go function signatures + types), the
+   design decisions and why, and TS-specific migration notes (e.g. Promise vs
+   context.Context, available crypto APIs, parsing layer).
+4. As the TS port progresses, move the entry through `proposed → in-progress →
+   landed-upstream` and link the dnsdata-js PR in the entry body.
 
 For the opposite direction (TS → Go requirements), see `DESIGN.md §4`.
