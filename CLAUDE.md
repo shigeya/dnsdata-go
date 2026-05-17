@@ -8,8 +8,8 @@ Operating notes for working in this repository with Claude Code.
 wide-cpp-lib (C++) → dnsdata-js (TypeScript) → dnsdata-go (Go)   ← here
 ```
 
-- TypeScript source of truth: `/Users/shigeya/work/claude/dnsdata-js/packages/core/src/lib/`
-- Primary consumer: `/Users/shigeya/work/claude/mailsec-probe/` (co-designed in both directions)
+- TypeScript source of truth: [`shigeya/dnsdata-js`](https://github.com/shigeya/dnsdata-js) — `packages/core/src/lib/`
+- Primary consumer: [`shigeya/mailsec-probe`](https://github.com/shigeya/mailsec-probe) (co-designed in both directions)
 
 ## Design rules
 
