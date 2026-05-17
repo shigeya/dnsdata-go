@@ -176,6 +176,28 @@ func (n *NSEC) CoversName(owner, qname string) bool {
 	return cmpOwner > 0 && cmpNext < 0
 }
 
+// ProvesNoData reports whether n's bitmap is consistent with a NODATA
+// proof for qtype: the bitmap does NOT cover qtype, AND it does NOT
+// cover CNAME (because a CNAME would otherwise have produced an
+// answer rather than NODATA, RFC 4035 §5.4).
+//
+// The caller must separately confirm that the NSEC's owner equals
+// qname (a matching denial) — that is what makes the absence of qtype
+// in the bitmap a statement about qname rather than about some
+// neighbour.
+func (n *NSEC) ProvesNoData(qtype uint16) bool {
+	if n == nil {
+		return false
+	}
+	if qtype == types.TypeCNAME {
+		// "No CNAME at qname" is what ProvesNoData would assert; if
+		// the caller is asking specifically about CNAME, the absence
+		// of CNAME in the bitmap is the proof itself.
+		return !n.CoversType(types.TypeCNAME)
+	}
+	return !n.CoversType(qtype) && !n.CoversType(types.TypeCNAME)
+}
+
 // ProvesNoDS reports whether n's type bitmap matches the shape of a
 // "no-DS, signed delegation" NSEC at the parent: NS bit present, DS bit
 // absent, and SOA bit absent. The presence of SOA would mean this is

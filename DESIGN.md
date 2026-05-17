@@ -59,7 +59,7 @@ When this section changes, both repos' DESIGN.md must be updated together.
 ### MUST
 
 1. `Validate(ctx, qname, qtype) → (*Result, error)` is goroutine-safe
-2. `Result.Verdict` is an enum of `Secure | Insecure | Bogus | Indeterminate`
+2. `Result.Verdict` is an enum of `Secure | SecureNoData | SecureNXDomain | Insecure | Bogus | Indeterminate` (v0.2.0 extended the original four-state set with two secure-negative states so callers can distinguish proven non-existence from "could not classify")
 3. `Result.Chain` contains each zone's DNSKEY/DS tags, algorithms, and RRSIG verification results
 4. `Result.InsecureAt` / `Result.BogusAt` returns the failure point as a string
 5. `Result.Evidence` carries the raw DS/DNSKEY/RRSIG data (forwarded into mailsec-probe Signals)
@@ -68,7 +68,7 @@ When this section changes, both repos' DESIGN.md must be updated together.
 8. DoH providers can be passed as a slice (failover order: Google / Cloudflare / Quad9)
 9. There is a direct-to-authoritative-NS mode (to interoperate with mailsec-probe's `--dns-server`)
 10. `Result` can be marshaled directly with `encoding/json`
-11. `Verdict.String()` returns `"secure"` / `"insecure"` / `"bogus"` / `"indeterminate"`
+11. `Verdict.String()` returns one of `"secure"` / `"secure-nodata"` / `"secure-nxdomain"` / `"insecure"` / `"bogus"` / `"indeterminate"` (the four pre-v0.2 strings are unchanged so consumers that only know those still work; consumers wanting fine-grained negative results route on the dash-separated new ones)
 12. Errors are sentinels usable with `errors.Is` (`ErrNoDS`, `ErrSigExpired`, `ErrUnsupportedAlgo`, `ErrChainTimeout`, ...)
 
 ### SHOULD
@@ -167,21 +167,34 @@ Week 4 actuals:
 - `dnssec/` — RFC 4034 §6.1 canonical name comparator
   (`CompareCanonicalNames` / `EqualCanonicalNames`); `NSEC.MatchesName`,
   `NSEC.CoversName` (with wrap-around at the zone-trailing record),
-  `NSEC.ProvesNoDS`; `NSEC3.CoversHash`, `NSEC3.HasOptOut`,
-  `NSEC3.ProvesNoDS`, plus `OwnerHashFromName` that decodes the
-  leftmost base32hex label of an NSEC3 owner name. Coverage 81.2%.
-- `verifier/negative.go` — `proveNoDS(parent, childName)` searches
-  parent for a matching NSEC, a matching NSEC3 (hash equals
-  H(childName)), or an opt-out NSEC3 covering H(childName); each
-  candidate is signature-verified against the parent's keys before
-  accepting the proof.
-- `verifier/chain.go::descendInto` — when `dsCount == 0`, calls
-  `proveNoDS`. A successful proof returns `descendInsecure`, sets
-  `Result.InsecureAt = childName`, and records the proof source in
-  the new `Result.InsecureReason` field. Absence of proof preserves
-  the pre-existing `descendNoCut` semantics so existing callers that
-  ask for DS at a non-cut name (e.g. qname itself) still proceed to
-  leaf resolution.
+  `NSEC.ProvesNoData`, `NSEC.ProvesNoDS`; `NSEC3.CoversHash`,
+  `NSEC3.HasOptOut`, `NSEC3.ProvesNoData`, `NSEC3.ProvesNoDS`, plus
+  `OwnerHashFromName` that decodes the leftmost base32hex label of
+  an NSEC3 owner name. Coverage 80.7%.
+- `verifier/` —
+  - Two new verdicts `SecureNoData` and `SecureNXDomain` with the
+    six-state JSON contract documented in §4 MUST 2 and MUST 11
+    above.
+  - `verifier/negative.go::proveNoDS(parent, childName)` searches
+    parent for a matching NSEC, a matching NSEC3 (hash equals
+    H(childName)), or an opt-out NSEC3 covering H(childName); each
+    candidate is signature-verified against the parent's keys
+    before accepting the proof.
+  - `verifier/leaf_negative.go::proveNoData / proveNXDomain` — leaf
+    NODATA and NXDOMAIN classification. NSEC NXDOMAIN requires a
+    qname-covering NSEC plus a wildcard-non-existence NSEC. NSEC3
+    NXDOMAIN implements the RFC 5155 §8.4 three-record
+    closest-encloser proof (CE match + next-closer cover +
+    wildcard cover). Each candidate is signature-verified.
+  - `verifier/chain.go::descendInto` — when `dsCount == 0`, calls
+    `proveNoDS`. A successful proof returns `descendInsecure`,
+    sets `Result.InsecureAt = childName`, and records the proof
+    source in the new `Result.InsecureReason` field.
+  - `verifier/chain.go::Validate` leaf step — when `added == 0`,
+    consults `proveNoData` then `proveNXDomain`; a successful
+    proof flips the verdict to `SecureNoData` or `SecureNXDomain`
+    with details in the new `Result.NegativeReason` field.
+    Coverage 83.1%.
 
 UP-001 (chain validator), UP-002 (parser + RData decoders), and
 UP-003 (auth resolver) document the new public surface for

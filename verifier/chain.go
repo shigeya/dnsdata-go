@@ -95,8 +95,23 @@ leaf:
 		return result, err
 	}
 	if added == 0 {
-		// NODATA / NXDOMAIN at the leaf — without NSEC proofs we
-		// cannot tell which; v0.1.0 reports Indeterminate.
+		// NODATA / NXDOMAIN at the leaf. Try NSEC / NSEC3 proofs in
+		// the same response: a matching NSEC/NSEC3 with the qtype
+		// missing from its bitmap is NODATA; a covering NSEC/NSEC3
+		// plus a wildcard-non-existence proof is NXDOMAIN. Without a
+		// proof we still report Indeterminate (the response is
+		// inconclusive — perhaps the resolver stripped the authority
+		// section).
+		if proven, reason := v.proveNoData(currentZone, qname, qtype); proven {
+			result.Verdict = VerdictSecureNoData
+			result.NegativeReason = reason
+			return result, nil
+		}
+		if proven, reason := v.proveNXDomain(currentZone, qname); proven {
+			result.Verdict = VerdictSecureNXDomain
+			result.NegativeReason = reason
+			return result, nil
+		}
 		return result, nil
 	}
 	ok, err := currentZone.VerifyRRSet(qname, qtype, dnssec.KeyModeNone, "")

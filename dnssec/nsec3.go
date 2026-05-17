@@ -146,6 +146,18 @@ func (n *NSEC3) CoversHash(ownerHash, target []byte) bool {
 	return cmpOwner > 0 && cmpNext < 0
 }
 
+// ProvesNoData mirrors [NSEC.ProvesNoData] for NSEC3: the bitmap must
+// NOT cover qtype, and must NOT cover CNAME.
+func (n *NSEC3) ProvesNoData(qtype uint16) bool {
+	if n == nil {
+		return false
+	}
+	if qtype == types.TypeCNAME {
+		return !n.CoversType(types.TypeCNAME)
+	}
+	return !n.CoversType(qtype) && !n.CoversType(types.TypeCNAME)
+}
+
 // ProvesNoDS reports whether n's type bitmap has the shape of a signed
 // no-DS delegation (NS present, DS absent, SOA absent). Like its NSEC
 // counterpart, this is bitmap-only — the caller must additionally

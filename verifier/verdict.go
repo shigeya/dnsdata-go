@@ -5,8 +5,10 @@ import (
 	"fmt"
 )
 
-// Verdict is the four-state outcome of DNSSEC chain validation
-// (RFC 4033 §5).
+// Verdict is the outcome of DNSSEC chain validation, refining the
+// four states in RFC 4033 §5 with two additional secure-negative
+// states so callers can distinguish "secure absence of data" from
+// "could not classify".
 type Verdict uint8
 
 const (
@@ -20,6 +22,18 @@ const (
 	// verified from a configured trust anchor to the requested rrset.
 	VerdictSecure
 
+	// VerdictSecureNoData means the chain reached a signed zone, the
+	// qname exists, but the requested qtype does not — and the zone
+	// produced a valid NSEC/NSEC3 proof of that absence (RFC 4035
+	// §5.4 / RFC 5155 §8.5).
+	VerdictSecureNoData
+
+	// VerdictSecureNXDomain means the chain reached a signed zone,
+	// the qname does not exist, and the zone produced a valid
+	// NSEC/NSEC3 proof of that non-existence including the wildcard
+	// non-existence proof (RFC 4035 §5.4 / RFC 5155 §8.4).
+	VerdictSecureNXDomain
+
 	// VerdictInsecure means the chain reached a zone that is
 	// provably unsigned (NSEC/NSEC3 proof of no-DS from the parent),
 	// and that zone signed the requested rrset only as cleartext —
@@ -32,12 +46,20 @@ const (
 	VerdictBogus
 )
 
-// String returns the lower-case mnemonic spelled out by RFC 4033 and
-// asserted in DESIGN.md MUST 11.
+// String returns the lower-case mnemonic. The four RFC 4033 states
+// keep their original spellings; the two secure-negative states use
+// dash-separated names ("secure-nodata", "secure-nxdomain") so old
+// consumers that only switch on the original four still see the
+// canonical secure / insecure / bogus / indeterminate words at the
+// front and can route the rest to a generic handler.
 func (v Verdict) String() string {
 	switch v {
 	case VerdictSecure:
 		return "secure"
+	case VerdictSecureNoData:
+		return "secure-nodata"
+	case VerdictSecureNXDomain:
+		return "secure-nxdomain"
 	case VerdictInsecure:
 		return "insecure"
 	case VerdictBogus:
@@ -64,6 +86,10 @@ func (v *Verdict) UnmarshalJSON(b []byte) error {
 	switch s {
 	case "secure":
 		*v = VerdictSecure
+	case "secure-nodata":
+		*v = VerdictSecureNoData
+	case "secure-nxdomain":
+		*v = VerdictSecureNXDomain
 	case "insecure":
 		*v = VerdictInsecure
 	case "bogus":

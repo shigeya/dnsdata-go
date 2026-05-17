@@ -96,6 +96,46 @@ func TestNSEC_ProvesNoDS(t *testing.T) {
 	}
 }
 
+func TestNSEC_ProvesNoData(t *testing.T) {
+	// Bitmap: A, RRSIG, NSEC. No AAAA, no CNAME.
+	n, err := dnssec.ParseNSEC(nil, "next.example. A RRSIG NSEC")
+	if err != nil {
+		t.Fatalf("ParseNSEC: %v", err)
+	}
+	cases := []struct {
+		qtype uint16
+		want  bool
+		why   string
+	}{
+		{0x1c /* AAAA */, true, "AAAA not in bitmap, no CNAME"},
+		{0x01 /* A */, false, "A IS in bitmap — record exists"},
+		{0x05 /* CNAME */, true, "CNAME not in bitmap"},
+	}
+	for _, c := range cases {
+		if got := n.ProvesNoData(c.qtype); got != c.want {
+			t.Errorf("ProvesNoData(%d) = %v, want %v (%s)", c.qtype, got, c.want, c.why)
+		}
+	}
+}
+
+func TestNSEC_ProvesNoData_WithCNAMEInBitmap(t *testing.T) {
+	// If CNAME exists at qname, the response would have been a CNAME
+	// (not NODATA) — so ProvesNoData must return false for any qtype
+	// other than CNAME itself.
+	n, err := dnssec.ParseNSEC(nil, "next.example. CNAME RRSIG NSEC")
+	if err != nil {
+		t.Fatalf("ParseNSEC: %v", err)
+	}
+	if n.ProvesNoData(0x1c) {
+		t.Errorf("CNAME present in bitmap must invalidate NODATA proof for AAAA")
+	}
+	// But asking for the absence of CNAME itself is fine to check —
+	// the answer is false because CNAME IS in the bitmap.
+	if n.ProvesNoData(0x05) {
+		t.Errorf("ProvesNoData(CNAME) when CNAME is present must be false")
+	}
+}
+
 // ---- NSEC3 ------------------------------------------------------------
 
 func TestNSEC3_HasOptOut(t *testing.T) {

@@ -22,6 +22,12 @@ type Result struct {
 	// Empty for non-Insecure verdicts.
 	InsecureReason string `json:"insecureReason,omitempty"`
 
+	// NegativeReason is a short, human-readable explanation paired
+	// with [VerdictSecureNoData] and [VerdictSecureNXDomain] —
+	// e.g. which NSEC/NSEC3 record(s) produced the proof. Empty for
+	// other verdicts.
+	NegativeReason string `json:"negativeReason,omitempty"`
+
 	// BogusAt names the zone where validation failed. Empty for
 	// non-Bogus verdicts.
 	BogusAt string `json:"bogusAt,omitempty"`

@@ -11,24 +11,36 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 - `dnssec/` — NSEC / NSEC3 negative-proof primitives.
   - `CompareCanonicalNames` / `EqualCanonicalNames` (RFC 4034 §6.1
     canonical name comparator with wrap-around-safe ordering).
-  - `NSEC.MatchesName` / `NSEC.CoversName` / `NSEC.ProvesNoDS`.
-  - `NSEC3.HasOptOut` / `NSEC3.CoversHash` / `NSEC3.ProvesNoDS`, plus
-    `OwnerHashFromName` for decoding the leftmost base32hex label of
-    an NSEC3 owner.
-- `verifier/` — Insecure-delegation classification.
-  - `descendInto` now consults the parent zone's NSEC / NSEC3 records
-    when DS is absent: a valid proof flips the verdict to
-    `Insecure` and records the proof source in the new
-    `Result.InsecureReason` field. Supported proof shapes are matching
-    NSEC, matching NSEC3, and covering NSEC3 with opt-out
-    (RFC 5155 §6).
-- `Result.InsecureReason` (`string`, JSON-omitempty).
+  - `NSEC.MatchesName` / `NSEC.CoversName` / `NSEC.ProvesNoData` /
+    `NSEC.ProvesNoDS`.
+  - `NSEC3.HasOptOut` / `NSEC3.CoversHash` / `NSEC3.ProvesNoData` /
+    `NSEC3.ProvesNoDS`, plus `OwnerHashFromName` for decoding the
+    leftmost base32hex label of an NSEC3 owner.
+- `verifier/` — Insecure-delegation classification and leaf
+  NODATA / NXDOMAIN classification.
+  - `descendInto` consults the parent zone's NSEC / NSEC3 records when
+    DS is absent: a valid proof flips the verdict to `Insecure` and
+    records the proof source in the new `Result.InsecureReason`
+    field. Supported proof shapes are matching NSEC, matching NSEC3,
+    and covering NSEC3 with opt-out (RFC 5155 §6).
+  - `Validate` leaf step consults NSEC / NSEC3 NODATA proofs (matching
+    NSEC/NSEC3 with qtype absent from bitmap) and NXDOMAIN proofs
+    (NSEC covering qname + wildcard-non-existence NSEC; or RFC 5155
+    §8.4 three-record NSEC3 closest-encloser proof).
+- Two new verdicts: `VerdictSecureNoData` (JSON `"secure-nodata"`)
+  and `VerdictSecureNXDomain` (JSON `"secure-nxdomain"`). The four
+  existing verdict strings are unchanged.
+- `Result.InsecureReason` and `Result.NegativeReason` (`string`,
+  JSON-omitempty).
 
 ### Changed
 
-- `verifier/doc.go` "Out of scope" list no longer includes the no-DS
-  proof case. NODATA / NXDOMAIN proofs at the leaf remain out of
-  scope.
+- `Verdict` enum widened from 4 to 6 states (`MUST 2` and `MUST 11` in
+  DESIGN.md §4 updated to match). Consumers that only match on the
+  original four strings still see them; consumers that want
+  fine-grained secure-negative routing can read the new dashed names.
+- `verifier/doc.go` "Out of scope" list no longer includes either the
+  no-DS proof case or the leaf NODATA / NXDOMAIN cases.
 
 ## [0.1.0] — Initial release
 

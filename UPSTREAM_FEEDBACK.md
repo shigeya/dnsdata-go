@@ -40,7 +40,7 @@ UF status legend:
 | [UP-001](#up-001) | DNSSEC chain validator with pluggable Resolver, four-state Verdict, and JSON-friendly Result | `verifier/` | proposed |
 | [UP-002](#up-002) | DNS message wire-format parser + RDATA-to-presentation decoders, kept in `wire/` so packages stay acyclic | `wire/message.go`, `wire/rdata.go`, `wire/name_decompress.go` | proposed |
 | [UP-003](#up-003) | UDP+TCP authoritative-DNS client with TC-flag fallback and multi-server failover, sharing the EDNS / DO query builder with the DoH client | `resolver/auth/` | proposed |
-| [UP-004](#up-004) | NSEC / NSEC3 negative-proof primitives + Insecure-delegation classification (canonical-name compare, CoversName / CoversHash, ProvesNoDS, opt-out support) | `dnssec/canon.go`, `dnssec/nsec.go`, `dnssec/nsec3.go`, `verifier/negative.go` | proposed |
+| [UP-004](#up-004) | NSEC / NSEC3 negative-proof primitives + Insecure-delegation + leaf NODATA / NXDOMAIN classification, six-state Verdict | `dnssec/canon.go`, `dnssec/nsec.go`, `dnssec/nsec3.go`, `verifier/negative.go`, `verifier/leaf_negative.go`, `verifier/verdict.go` | proposed |
 
 UP status legend:
 
@@ -495,13 +495,18 @@ dnsdata-js to track the TS port.
 ## UP-004
 
 NSEC / NSEC3 negative-proof primitives, plus the verifier-side wiring
-that lifts a "no-DS at delegation" response from `descendNoCut` (silent
-fall-through) to a real `VerdictInsecure` with a labelled reason.
+that lifts no-DS-at-delegation, NODATA-at-leaf, and NXDOMAIN-at-leaf
+responses from "no rrset present" silence into concrete verdicts with
+labelled reasons. Includes a six-state Verdict enum so the two
+secure-negative outcomes are distinguishable from "couldn't classify".
 
 **Go source.** `dnssec/canon.go`, `dnssec/nsec.go` (CoversName /
-MatchesName / ProvesNoDS), `dnssec/nsec3.go` (CoversHash / HasOptOut /
-ProvesNoDS / OwnerHashFromName), `verifier/negative.go`,
-`verifier/chain.go::descendInto`, `verifier/result.go::InsecureReason`.
+MatchesName / ProvesNoData / ProvesNoDS), `dnssec/nsec3.go`
+(CoversHash / HasOptOut / ProvesNoData / ProvesNoDS /
+OwnerHashFromName), `verifier/negative.go`,
+`verifier/leaf_negative.go`, `verifier/chain.go::descendInto` and
+leaf step, `verifier/verdict.go`, `verifier/result.go::InsecureReason`
+and `NegativeReason`.
 
 **Public API.**
 
@@ -512,19 +517,32 @@ func EqualCanonicalNames(a, b string) bool
 
 // dnssec/nsec.go
 func (n *NSEC) MatchesName(owner, qname string) bool
-func (n *NSEC) CoversName(owner, qname string) bool    // strict (open) range
-func (n *NSEC) ProvesNoDS() bool                       // NS && !DS && !SOA
+func (n *NSEC) CoversName(owner, qname string) bool      // strict (open) range
+func (n *NSEC) ProvesNoData(qtype uint16) bool           // !qtype && !CNAME
+func (n *NSEC) ProvesNoDS() bool                          // NS && !DS && !SOA
 
 // dnssec/nsec3.go
 func (n *NSEC3) HasOptOut() bool
 func (n *NSEC3) CoversHash(ownerHash, target []byte) bool
+func (n *NSEC3) ProvesNoData(qtype uint16) bool
 func (n *NSEC3) ProvesNoDS() bool
 func OwnerHashFromName(owner string) ([]byte, error)
+
+// verifier/verdict.go
+const (
+    VerdictIndeterminate Verdict = iota
+    VerdictSecure
+    VerdictSecureNoData      // new in v0.2.0
+    VerdictSecureNXDomain    // new in v0.2.0
+    VerdictInsecure
+    VerdictBogus
+)
 
 // verifier/result.go
 type Result struct {
     // ... existing fields ...
     InsecureReason string `json:"insecureReason,omitempty"`
+    NegativeReason string `json:"negativeReason,omitempty"`
 }
 ```
 
@@ -570,6 +588,28 @@ type Result struct {
    that ask for DS at a name that isn't a zone cut (most importantly
    qname itself in `Validate`) still proceed correctly to the leaf
    resolution step.
+9. **Leaf step distinguishes secure-negative from indeterminate.**
+   When the leaf rrset is empty, `Validate` tries `proveNoData` first
+   (matching NSEC/NSEC3 with qtype missing from the bitmap), then
+   `proveNXDomain`. A successful proof produces a real positive
+   classification — `VerdictSecureNoData` or `VerdictSecureNXDomain`
+   — instead of conflating it with "we couldn't tell".
+10. **NSEC3 NXDOMAIN does the full three-record proof.** RFC 5155 §8.4
+    requires a closest-encloser match, a next-closer cover, and a
+    wildcard cover. The implementation walks qname's ancestors from
+    longest to shortest to find the CE, then re-uses
+    `findCoveringNSEC3` for NC and the wildcard. Skipping any of the
+    three short-circuits to "no proof".
+11. **NXDOMAIN proofs require wildcard non-existence.** Without it, a
+    zone with a wildcard could lie by suppressing the wildcard answer
+    and serving NSECs that only cover qname. NSEC NXDOMAIN therefore
+    needs both a qname-covering NSEC and an NSEC denying
+    `*.<closest-encloser>`.
+12. **Six-state Verdict is additive, not breaking.** The original four
+    strings (`secure`, `insecure`, `bogus`, `indeterminate`) keep their
+    exact spelling. The new states use dash-separated names so old
+    consumers either route them through their default case or upgrade
+    to switch on the new strings explicitly.
 
 **TS migration notes.**
 
@@ -585,6 +625,13 @@ type Result struct {
   label.
 - `bytes.Compare` on hashes maps to a `Uint8Array` byte-wise compare
   loop in TS (no built-in lexicographic comparator for typed arrays).
+- The six-state Verdict can be encoded in TS as a string literal
+  union: `"secure" | "secure-nodata" | "secure-nxdomain" | "insecure"
+  | "bogus" | "indeterminate"`. Keep the spellings to preserve the
+  JSON contract.
+- The closest-encloser walk (ancestors from longest to shortest,
+  hashing each) is straightforward in TS once `ComputeNSEC3Hash` is
+  ported. Wildcard prefixing is plain string concatenation.
 
 **Status.** Ships in dnsdata-go v0.2.0 (Week 4). Awaiting an issue on
 dnsdata-js to track the TS port.
