@@ -32,3 +32,7 @@ that consumer.
 ## License
 
 MIT — see [LICENSE](./LICENSE).
+
+## Acknowledgements
+
+The design, implementation, and documentation in this repository were produced in collaboration with [Claude Opus 4.7](https://www.anthropic.com/claude) running inside [Claude Code](https://www.anthropic.com/claude-code).
