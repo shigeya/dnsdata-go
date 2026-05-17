@@ -114,10 +114,28 @@ Mirror of the schedule table in mailsec-probe `DESIGN.md §16`.
 | Week | dnsdata-go side | mailsec-probe side |
 |------|------------------|---------------------|
 | Week 1 | repo bootstrap; minimal `types/`, `wire/` + tests (`zone/` slipped to Week 2) | (none) |
-| Week 2 | `zone/`, full `dnssec/` (DNSKEY/RRSIG/DS/NSEC/anchors), `resolver/doh/` | (none) |
-| Week 3 | `verifier/chain.go` (chain walker), `v0.1.0` tag | implement `--dnssec-mode validate`, swap in `internal/probe/dnssec/`, regenerate goldens |
+| Week 2 | `zone/`, full `dnssec/` (DNSKEY/RRSIG/DS/NSEC/NSEC3/anchors + chain ops), `resolver/doh/` | (none) |
+| Week 3 | `verifier/chain.go` (chain walker), `resolver/auth/`, `v0.1.0` tag | implement `--dnssec-mode validate`, swap in `internal/probe/dnssec/`, regenerate goldens |
 
 Week 1 actuals: `types/` and `wire/` shipped with tests at 100% line
 coverage.
+
+Week 2 actuals:
+
+- `zone/` — RR base, master-file parser, RR-handler registry.
+- `dnssec/` — root anchors (`AnchorDS` / `AnchorDNSKEY` + builtin
+  KSK-2017 / KSK-2024); `DNSKey` with RFC 4034 Appendix B key-tag, RSA
+  (PKCS#1 v1.5), ECDSA (P-256/P-384), Ed25519 sign + verify; `RRSig`
+  with both YYYYMMDDhhmmss and epoch-second datetime parsing;
+  `DS` + `VerifyDigest` (SHA-1 / SHA-256 / SHA-384); `NSEC` with type
+  bitmap codec; `NSEC3` + `NSEC3PARAM` with base32hex decoding and
+  RFC 5155 §5 hashing. `Zone` wraps `zone.Zone` with parent pointer,
+  SEP set, RFC 4034 §6.2 canonical digest-target builder, and
+  KSK/ZSK/CSK verification modes. Coverage 80.2%. Handler registration
+  is opt-in via the exported `RegisterHandlers()` — no `init()` side
+  effects per §4.21.
+- `resolver/doh/` — RFC 8484 DoH client with provider failover (Google
+  / Cloudflare / Quad9), EDNS(0) OPT with the DO bit, transport-only
+  surface returning raw response bytes. Coverage 93.8%.
 
 Session handoff and ongoing notes live in `CLAUDE.md`.
