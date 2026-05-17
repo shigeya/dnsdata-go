@@ -15,6 +15,7 @@ Go-side deviation comment may be removed.
 | [UF-001](#uf-001) | `domain_name2wire`'s `\| 0x20` lowercase corrupts the underscore byte (0x5F → 0x7F) | `dns_wire.ts:16` | bug | pending |
 | [UF-002](#uf-002) | No label / name length validation | `dns_wire.ts:1-32` | robustness | pending |
 | [UF-003](#uf-003) | Unknown enum inputs throw bare `RangeError`; no typed classification | `dns_type_table.ts:18,31,59,86,…` | api-shape | pending |
+| [UF-004](#uf-004) | `ResourceRecord.get_wire_body` silently emits nothing when RDATA parse fails | `dns_zone.ts:175-295` | robustness | pending |
 
 Status legend:
 
@@ -136,6 +137,43 @@ export class UnknownOpCodeError extends RangeError {
 ```
 
 **See also:** `types/errors.go`, the `_Unknown` cases in `types/*_test.go`.
+
+---
+
+## UF-004
+
+### `ResourceRecord.get_wire_body` silently emits nothing on malformed RDATA
+
+**TS source:** `packages/core/src/lib/dns_zone.ts:175-295`
+
+**Problem.** Every per-type encoder (`_wire_body_a`, `_wire_body_mx`,
+`_wire_body_srv`, `_wire_body_caa`, ...) returns early via `if (!m) return`
+when the presentation value fails to parse, leaving the builder unchanged.
+The caller cannot tell the difference between (a) "type has no encoder",
+(b) "encoder ran successfully and produced an empty RDATA", and (c)
+"value was malformed and the entire record was silently dropped".
+
+Result: a typo in zone-file presentation form (e.g. `MX foo bar` instead
+of `MX 10 bar.example.`) produces a packet with a missing RR rather than
+a clear error.
+
+**Go-side handling.** `zone/rr.go` returns `ErrRDataFormat` from
+`WireBody` when a built-in encoder sees a malformed value. Callers can
+detect this with `errors.Is(err, zone.ErrRDataFormat)`.
+
+**Recommended TS fix.** Have each `_wire_body_*` throw
+`DNSZoneRDataFormatError` (already defined in `dns_exception.ts`!) when
+its regex fails or when `parse_ipv4` / `parse_ipv6` return null. The
+public `get_wire_body` should propagate the throw; alternatively change
+its return type to `boolean` (success) for back-compat.
+
+`get_wire_body` should also disambiguate "no encoder for this type" from
+"encoder failed to parse". A separate `has_encoder(type)` predicate is
+the easiest path.
+
+**See also:** `zone/rr.go`, `zone/handler_test.go`
+(`TestWireBody_MalformedAReturnsError`, `TestWireBody_MalformedMXReturnsError`,
+`TestWireBody_UnsupportedTypeIsNoOp`).
 
 ---
 
