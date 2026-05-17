@@ -12,9 +12,21 @@ import (
 	"github.com/shigeya/dnsdata-go/zone"
 )
 
+// MaxAliasHops caps the number of CNAME / DNAME redirects a single
+// Validate call is willing to follow. RFC 1035 leaves the limit to
+// implementations; popular validators settle near 8–16. We use 10 and
+// also detect repeated qnames (a tighter loop indicator).
+const MaxAliasHops = 10
+
 // Validate walks the DNSSEC chain of trust from the root zone down to
 // (qname, qtype), classifies the outcome, and returns the evidence
 // gathered along the way.
+//
+// CNAME and DNAME redirections are chased transparently up to
+// [MaxAliasHops] steps. Each hop is recorded in [Result.Aliases] and
+// the final Verdict is the worst-of across all hops: any Insecure
+// hop yields Insecure, any Bogus hop yields Bogus, and so on. Loops
+// (a qname repeating in the chain) are reported as Bogus.
 //
 // See DESIGN.md §3 for the contract. Errors returned from Validate
 // represent failures that prevented the verifier from forming any
@@ -26,106 +38,258 @@ func (v *Verifier) Validate(ctx context.Context, qname string, qtype uint16) (*R
 	if qname == "" {
 		return nil, fmt.Errorf("%w: qname is empty", ErrInvalidQName)
 	}
-	qname = normalizeQName(qname)
-
 	result := &Result{
 		Verdict:  VerdictIndeterminate,
 		Evidence: Evidence{DNSKEYs: map[string][]string{}, DSes: map[string][]string{}, RRSIGs: map[string][]string{}},
 	}
 
-	if err := ctx.Err(); err != nil {
-		return result, joinChainErr(err)
+	currentQname := normalizeQName(qname)
+	seen := map[string]bool{}
+	combined := VerdictIndeterminate
+	var combinedSet bool
+
+	for hop := 0; hop <= MaxAliasHops; hop++ {
+		if err := ctx.Err(); err != nil {
+			return result, joinChainErr(err)
+		}
+		if seen[currentQname] {
+			result.Verdict = VerdictBogus
+			result.BogusAt = currentQname
+			result.BogusReason = "alias loop detected"
+			return result, nil
+		}
+		seen[currentQname] = true
+
+		outcome, err := v.validateOneHop(ctx, currentQname, qtype, result)
+		if err != nil {
+			return result, err
+		}
+
+		if !combinedSet {
+			combined = outcome.Verdict
+			combinedSet = true
+		} else {
+			combined = combineVerdicts(combined, outcome.Verdict)
+		}
+
+		if outcome.Alias != nil {
+			outcome.Alias.Verdict = outcome.Verdict
+			result.Aliases = append(result.Aliases, *outcome.Alias)
+			currentQname = outcome.Alias.Target
+			continue
+		}
+
+		result.Verdict = combined
+		// Carry forward the terminal hop's diagnostic strings so the
+		// caller learns *why* the worst hop failed (if any) or which
+		// negative proof produced a Secure-negative verdict. The
+		// terminal hop's values overwrite anything set earlier so the
+		// reported location matches the verdict.
+		if outcome.BogusAt != "" {
+			result.BogusAt = outcome.BogusAt
+		}
+		if outcome.BogusReason != "" {
+			result.BogusReason = outcome.BogusReason
+		}
+		if outcome.InsecureAt != "" {
+			result.InsecureAt = outcome.InsecureAt
+		}
+		if outcome.InsecureReason != "" {
+			result.InsecureReason = outcome.InsecureReason
+		}
+		if outcome.NegativeReason != "" {
+			result.NegativeReason = outcome.NegativeReason
+		}
+		return result, nil
 	}
 
+	// Alias chain longer than MaxAliasHops without resolving.
+	result.Verdict = VerdictBogus
+	result.BogusAt = currentQname
+	result.BogusReason = fmt.Sprintf("alias chain exceeded %d hops", MaxAliasHops)
+	return result, nil
+}
+
+// hopOutcome is the inner result of one [validateOneHop] call.
+//
+// Exactly one of {terminal verdict, Alias} is meaningful: when Alias
+// is non-nil the caller should redirect to Alias.Target and run the
+// next hop; otherwise the hop is terminal and Verdict is the answer.
+type hopOutcome struct {
+	Verdict        Verdict
+	BogusAt        string
+	BogusReason    string
+	InsecureAt     string
+	InsecureReason string
+	NegativeReason string
+	Alias          *AliasStep
+}
+
+// validateOneHop runs a single chain-walk + leaf-resolution against
+// (qname, qtype). It mutates result.Chain / result.Evidence as it
+// walks, but does NOT touch result.Verdict / result.Aliases — those
+// are the caller's responsibility.
+func (v *Verifier) validateOneHop(ctx context.Context, qname string, qtype uint16, result *Result) (*hopOutcome, error) {
 	// Step 1: load and validate the root zone.
 	rootZone, rootKSK, err := v.validateRoot(ctx, result)
 	if err != nil {
-		return result, err
+		return nil, err
 	}
 	if rootZone == nil {
-		// validateRoot set result.Verdict to Bogus.
-		return result, nil
+		// validateRoot set result.Verdict / Bogus*; mirror into the
+		// outcome so the outer loop can combine verdicts.
+		return &hopOutcome{
+			Verdict:     VerdictBogus,
+			BogusAt:     result.BogusAt,
+			BogusReason: result.BogusReason,
+		}, nil
 	}
-	result.Chain = append(result.Chain, summarizeZone(".", rootZone, rootKSK))
+	if !zoneAlreadyInChain(result, ".") {
+		result.Chain = append(result.Chain, summarizeZone(".", rootZone, rootKSK))
+	}
 
 	// Step 2: descend through each label boundary that's actually a
-	// zone cut (= has DS records in the parent).
+	// zone cut.
 	currentZone := rootZone
 	currentName := "."
 	for _, childName := range descendantZones(qname) {
 		if err := ctx.Err(); err != nil {
-			return result, joinChainErr(err)
+			return nil, joinChainErr(err)
 		}
 		childZone, childKSK, status, err := v.descendInto(ctx, currentZone, currentName, childName, result)
 		if err != nil {
-			return result, err
+			return nil, err
 		}
 		switch status {
 		case descendDescended:
-			result.Chain = append(result.Chain, summarizeZone(childName, childZone, childKSK))
+			if !zoneAlreadyInChain(result, childName) {
+				result.Chain = append(result.Chain, summarizeZone(childName, childZone, childKSK))
+			}
 			currentZone = childZone
 			currentName = childName
 		case descendInsecure:
-			result.InsecureAt = childName
-			result.Verdict = VerdictInsecure
-			return result, nil
+			return &hopOutcome{
+				Verdict:        VerdictInsecure,
+				InsecureAt:     childName,
+				InsecureReason: result.InsecureReason,
+			}, nil
 		case descendBogus:
-			result.Verdict = VerdictBogus
-			result.BogusAt = childName
-			if result.BogusReason == "" {
-				result.BogusReason = "DS or DNSKEY verification failed"
+			reason := result.BogusReason
+			if reason == "" {
+				reason = "DS or DNSKEY verification failed"
 			}
-			return result, nil
+			return &hopOutcome{
+				Verdict:     VerdictBogus,
+				BogusAt:     childName,
+				BogusReason: reason,
+			}, nil
 		case descendNoCut:
-			// child label is not a zone cut — stop descending and
-			// query qname inside the current zone.
 			goto leaf
 		}
 	}
 
 leaf:
 	if err := ctx.Err(); err != nil {
-		return result, joinChainErr(err)
+		return nil, joinChainErr(err)
 	}
+	return v.resolveLeaf(ctx, currentZone, currentName, qname, qtype, result)
+}
 
-	// Step 3: load the qname/qtype rrset into the deepest validated
-	// zone and verify its signature.
+// resolveLeaf handles the final step of a hop: load qname/qtype into
+// currentZone and either return a terminal verdict or surface an
+// alias hop. CNAME at qname and DNAME at any ancestor of qname are
+// followed; missing rrsets fall through to NSEC / NSEC3 negative
+// proofs.
+func (v *Verifier) resolveLeaf(ctx context.Context, currentZone *dnssec.Zone, currentName, qname string, qtype uint16, result *Result) (*hopOutcome, error) {
 	added, err := v.loadRecords(ctx, currentZone, qname, qtype, result)
 	if err != nil {
-		return result, err
+		return nil, err
 	}
-	if added == 0 {
-		// NODATA / NXDOMAIN at the leaf. Try NSEC / NSEC3 proofs in
-		// the same response: a matching NSEC/NSEC3 with the qtype
-		// missing from its bitmap is NODATA; a covering NSEC/NSEC3
-		// plus a wildcard-non-existence proof is NXDOMAIN. Without a
-		// proof we still report Indeterminate (the response is
-		// inconclusive — perhaps the resolver stripped the authority
-		// section).
-		if proven, reason := v.proveNoData(currentZone, qname, qtype); proven {
-			result.Verdict = VerdictSecureNoData
-			result.NegativeReason = reason
-			return result, nil
+	if added > 0 {
+		ok, err := currentZone.VerifyRRSet(qname, qtype, dnssec.KeyModeNone, "")
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrVerifier, err)
 		}
-		if proven, reason := v.proveNXDomain(currentZone, qname); proven {
-			result.Verdict = VerdictSecureNXDomain
-			result.NegativeReason = reason
-			return result, nil
+		if !ok {
+			return &hopOutcome{
+				Verdict:     VerdictBogus,
+				BogusAt:     currentName,
+				BogusReason: fmt.Sprintf("RRSIG over %s/%s did not verify", qname, qtypeMnemonic(qtype)),
+			}, nil
 		}
-		return result, nil
+		return &hopOutcome{Verdict: VerdictSecure}, nil
 	}
-	ok, err := currentZone.VerifyRRSet(qname, qtype, dnssec.KeyModeNone, "")
-	if err != nil {
-		return result, fmt.Errorf("%w: %v", ErrVerifier, err)
+
+	// Resolver placed records into currentZone but none matched
+	// qtype. Look for an alias before declaring NODATA.
+	if alias, hop, err := v.tryCNAME(currentZone, currentName, qname); err != nil {
+		return nil, err
+	} else if hop != nil {
+		return hop, nil
+	} else if alias != nil {
+		// alias != nil but hop == nil should not happen; defensive.
+		_ = alias
 	}
-	if !ok {
-		result.Verdict = VerdictBogus
-		result.BogusAt = currentName
-		result.BogusReason = fmt.Sprintf("RRSIG over %s/%s did not verify", qname, qtypeMnemonic(qtype))
-		return result, nil
+	if _, hop, err := v.tryDNAME(currentZone, currentName, qname); err != nil {
+		return nil, err
+	} else if hop != nil {
+		return hop, nil
 	}
-	result.Verdict = VerdictSecure
-	return result, nil
+
+	// No alias — fall back to negative-existence proofs.
+	if proven, reason := v.proveNoData(currentZone, qname, qtype); proven {
+		return &hopOutcome{
+			Verdict:        VerdictSecureNoData,
+			NegativeReason: reason,
+		}, nil
+	}
+	if proven, reason := v.proveNXDomain(currentZone, qname); proven {
+		return &hopOutcome{
+			Verdict:        VerdictSecureNXDomain,
+			NegativeReason: reason,
+		}, nil
+	}
+	return &hopOutcome{Verdict: VerdictIndeterminate}, nil
+}
+
+// zoneAlreadyInChain reports whether result.Chain already contains a
+// ZoneStep for zoneName. Used during alias chasing so multiple hops
+// don't duplicate "." and "com." entries.
+func zoneAlreadyInChain(result *Result, zoneName string) bool {
+	for _, step := range result.Chain {
+		if step.Zone == zoneName {
+			return true
+		}
+	}
+	return false
+}
+
+// combineVerdicts merges a per-hop verdict into the running total
+// using a worst-of policy. The ordering, from "best" to "worst", is:
+//
+//	Secure < SecureNoData ~ SecureNXDomain < Indeterminate < Insecure < Bogus
+//
+// Secure-negative variants are treated as equivalent to Secure for
+// the purposes of merging because both indicate "the chain reached
+// a signed conclusion"; the kind of secure result the chain produced
+// is preserved only when nothing worse follows.
+func combineVerdicts(a, b Verdict) Verdict {
+	if a == VerdictBogus || b == VerdictBogus {
+		return VerdictBogus
+	}
+	if a == VerdictInsecure || b == VerdictInsecure {
+		return VerdictInsecure
+	}
+	if a == VerdictIndeterminate || b == VerdictIndeterminate {
+		return VerdictIndeterminate
+	}
+	// Both are some flavour of Secure. Prefer the most specific —
+	// if either side is a secure-negative, surface that (callers
+	// generally want to know "the redirect terminated at a NODATA").
+	if b == VerdictSecure {
+		return a
+	}
+	return b
 }
 
 // descendStatus is the four-way outcome of a single descent step.

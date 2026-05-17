@@ -42,9 +42,19 @@
 // requires a separate next-closer covering NSEC3. Successful proof
 // yields [VerdictSecureNXDomain].
 //
+// CNAME / DNAME chasing. The chain walker chases up to
+// [MaxAliasHops] redirections. CNAMEs are followed when their RRSIG
+// verifies under the zone they live in; DNAMEs at any proper
+// ancestor of qname rewrite qname per RFC 6672 §5.3.1. Each hop is
+// captured as an [AliasStep] in [Result.Aliases]. The terminal
+// verdict is the worst-of across all hops: any Insecure hop yields
+// Insecure, any Bogus hop yields Bogus, and so on. Repeated qnames
+// in the chain are reported as Bogus with reason "alias loop
+// detected"; chains longer than [MaxAliasHops] are reported as
+// Bogus with reason "alias chain exceeded N hops".
+//
 // Out of scope (tracked separately):
 //
-//   - CNAME / DNAME chasing.
 //   - RFC 5011 trust-anchor key rollover.
 //   - Caching of DNSKEY / DS rrsets across calls (the SHOULD #13 cache
 //     hook in DESIGN.md §4 will land alongside the cache milestone).

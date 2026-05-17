@@ -41,6 +41,38 @@ type Result struct {
 	// downstream consumers (mailsec-probe Signals) can re-render them
 	// without re-querying. DESIGN.md MUST 5.
 	Evidence Evidence `json:"evidence"`
+
+	// Aliases enumerates every CNAME / DNAME hop the chain walker
+	// followed before reaching the terminal qname. Empty when the
+	// original qname has the requested rrset (or a negative proof)
+	// directly. The terminal qname is the From field of the last
+	// step's target, NOT a step itself.
+	Aliases []AliasStep `json:"aliases,omitempty"`
+}
+
+// AliasStep records one CNAME or DNAME hop encountered during
+// resolution. Each hop is a signed redirect from a name in a zone to
+// a target name (possibly in a different zone), reified for both
+// audit and for downstream consumers that want to render the journey.
+type AliasStep struct {
+	// Type is "cname" or "dname".
+	Type string `json:"type"`
+
+	// From is the name that produced the alias (i.e. the CNAME owner
+	// or DNAME owner).
+	From string `json:"from"`
+
+	// Target is the rewritten name the chain walker continues with
+	// after this hop.
+	Target string `json:"target"`
+
+	// Zone is the zone that signed this alias record.
+	Zone string `json:"zone"`
+
+	// Verdict is the classification of this hop in isolation —
+	// useful for callers that want to know exactly which hop turned
+	// Insecure or Bogus when the final verdict is the worst-of.
+	Verdict Verdict `json:"verdict"`
 }
 
 // ZoneStep summarises one zone on the chain.

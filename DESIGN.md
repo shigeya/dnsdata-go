@@ -117,6 +117,7 @@ Mirror of the schedule table in mailsec-probe `DESIGN.md §16`.
 | Week 2 | `zone/`, full `dnssec/` (DNSKEY/RRSIG/DS/NSEC/NSEC3/anchors + chain ops), `resolver/doh/` | (none) |
 | Week 3 | `verifier/chain.go` (chain walker), `resolver/auth/`, `v0.1.0` tag | implement `--dnssec-mode validate`, swap in `internal/probe/dnssec/`, regenerate goldens |
 | Week 4 | NSEC / NSEC3 negative proofs → Insecure delegation classification | wire `Result.InsecureAt` / `InsecureReason` into Signals |
+| Week 5 | Leaf NSEC / NSEC3 negative proofs (SecureNoData / SecureNXDomain), CNAME / DNAME chasing with worst-of verdict | wire `Result.NegativeReason` and `Result.Aliases` into Signals |
 
 Week 1 actuals: `types/` and `wire/` shipped with tests at 100% line
 coverage.
@@ -195,6 +196,29 @@ Week 4 actuals:
     proof flips the verdict to `SecureNoData` or `SecureNXDomain`
     with details in the new `Result.NegativeReason` field.
     Coverage 83.1%.
+
+Week 5 actuals:
+
+- `verifier/` — CNAME / DNAME chasing on top of the existing chain
+  walker.
+  - `Validate` is now an outer loop over `validateOneHop`, capped at
+    `MaxAliasHops = 10` and guarded by per-qname loop detection.
+    Each alias-hop appends an `AliasStep` to `Result.Aliases` and
+    contributes to the worst-of verdict.
+  - `verifier/alias.go::tryCNAME` finds the CNAME rrset at qname in
+    the current zone, verifies its RRSIG, and packages an
+    [AliasStep]. Failure modes (missing target, bad signature)
+    produce a Bogus hop instead of an error.
+  - `verifier/alias.go::tryDNAME` walks qname's ancestors and finds
+    the first DNAME that synthesises a rewrite per RFC 6672 §5.3.1.
+    A signed DNAME and a correct synthesised target are both
+    enforced before chasing.
+  - `combineVerdicts` implements the worst-of policy:
+    Bogus > Insecure > Indeterminate > Secure* with the
+    secure-negative variants treated as equivalent to Secure for
+    combine but preserved as the terminal output when nothing
+    worse follows.
+  Coverage 83.4%.
 
 UP-001 (chain validator), UP-002 (parser + RData decoders), and
 UP-003 (auth resolver) document the new public surface for

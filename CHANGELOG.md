@@ -16,31 +16,43 @@ this project adheres to [Semantic Versioning](https://semver.org/).
   - `NSEC3.HasOptOut` / `NSEC3.CoversHash` / `NSEC3.ProvesNoData` /
     `NSEC3.ProvesNoDS`, plus `OwnerHashFromName` for decoding the
     leftmost base32hex label of an NSEC3 owner.
-- `verifier/` — Insecure-delegation classification and leaf
-  NODATA / NXDOMAIN classification.
-  - `descendInto` consults the parent zone's NSEC / NSEC3 records when
-    DS is absent: a valid proof flips the verdict to `Insecure` and
-    records the proof source in the new `Result.InsecureReason`
-    field. Supported proof shapes are matching NSEC, matching NSEC3,
-    and covering NSEC3 with opt-out (RFC 5155 §6).
-  - `Validate` leaf step consults NSEC / NSEC3 NODATA proofs (matching
-    NSEC/NSEC3 with qtype absent from bitmap) and NXDOMAIN proofs
-    (NSEC covering qname + wildcard-non-existence NSEC; or RFC 5155
-    §8.4 three-record NSEC3 closest-encloser proof).
+- `verifier/` — three new verdict-producing capabilities.
+  - **Insecure-delegation classification.** `descendInto` consults
+    the parent zone's NSEC / NSEC3 records when DS is absent: a
+    valid proof flips the verdict to `Insecure` and records the
+    proof source in the new `Result.InsecureReason` field.
+    Supported proof shapes are matching NSEC, matching NSEC3, and
+    covering NSEC3 with opt-out (RFC 5155 §6).
+  - **Leaf NODATA / NXDOMAIN classification.** `Validate` leaf step
+    consults NSEC / NSEC3 NODATA proofs (matching NSEC/NSEC3 with
+    qtype absent from bitmap) and NXDOMAIN proofs (NSEC covering
+    qname + wildcard-non-existence NSEC; or RFC 5155 §8.4
+    three-record NSEC3 closest-encloser proof).
+  - **CNAME / DNAME chasing.** `Validate` follows up to
+    `MaxAliasHops` (10) CNAME or DNAME redirections, restarting the
+    chain walk for each new qname. Each hop is captured as an
+    `AliasStep` in `Result.Aliases`. Verdict is worst-of across
+    hops. Loops are reported as Bogus with reason "alias loop
+    detected"; chains longer than `MaxAliasHops` are reported as
+    Bogus with reason "alias chain exceeded N hops".
 - Two new verdicts: `VerdictSecureNoData` (JSON `"secure-nodata"`)
   and `VerdictSecureNXDomain` (JSON `"secure-nxdomain"`). The four
   existing verdict strings are unchanged.
-- `Result.InsecureReason` and `Result.NegativeReason` (`string`,
-  JSON-omitempty).
+- `Result.InsecureReason`, `Result.NegativeReason`, and
+  `Result.Aliases` (all JSON-omitempty).
 
 ### Changed
 
-- `Verdict` enum widened from 4 to 6 states (`MUST 2` and `MUST 11` in
-  DESIGN.md §4 updated to match). Consumers that only match on the
-  original four strings still see them; consumers that want
+- `Verdict` enum widened from 4 to 6 states (`MUST 2` and `MUST 11`
+  in DESIGN.md §4 updated to match). Consumers that only match on
+  the original four strings still see them; consumers that want
   fine-grained secure-negative routing can read the new dashed names.
-- `verifier/doc.go` "Out of scope" list no longer includes either the
-  no-DS proof case or the leaf NODATA / NXDOMAIN cases.
+- `Validate` refactored internally into `validateOneHop` +
+  `resolveLeaf` + outer alias loop. Public signature unchanged.
+  Existing callers see identical behaviour for non-aliased queries.
+- `verifier/doc.go` "Out of scope" list now only retains RFC 5011
+  trust-anchor rollover, DNSKEY / DS cache, and wildcard-synthesised
+  positive answers.
 
 ## [0.1.0] — Initial release
 

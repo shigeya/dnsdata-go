@@ -41,6 +41,7 @@ UF status legend:
 | [UP-002](#up-002) | DNS message wire-format parser + RDATA-to-presentation decoders, kept in `wire/` so packages stay acyclic | `wire/message.go`, `wire/rdata.go`, `wire/name_decompress.go` | proposed |
 | [UP-003](#up-003) | UDP+TCP authoritative-DNS client with TC-flag fallback and multi-server failover, sharing the EDNS / DO query builder with the DoH client | `resolver/auth/` | proposed |
 | [UP-004](#up-004) | NSEC / NSEC3 negative-proof primitives + Insecure-delegation + leaf NODATA / NXDOMAIN classification, six-state Verdict | `dnssec/canon.go`, `dnssec/nsec.go`, `dnssec/nsec3.go`, `verifier/negative.go`, `verifier/leaf_negative.go`, `verifier/verdict.go` | proposed |
+| [UP-005](#up-005) | CNAME / DNAME chasing with worst-of verdict combination, alias-loop detection, MaxAliasHops cap, AliasStep records | `verifier/alias.go`, `verifier/chain.go::Validate`, `verifier/result.go::AliasStep` | proposed |
 
 UP status legend:
 
@@ -634,6 +635,99 @@ type Result struct {
   ported. Wildcard prefixing is plain string concatenation.
 
 **Status.** Ships in dnsdata-go v0.2.0 (Week 4). Awaiting an issue on
+dnsdata-js to track the TS port.
+
+---
+
+## UP-005
+
+CNAME and DNAME chasing in the chain validator, plus the
+verdict-combination policy that lets multi-hop chains produce a
+single coherent answer.
+
+**Go source.** `verifier/alias.go` (`tryCNAME`, `tryDNAME`,
+`synthesiseDNAMETarget`), `verifier/chain.go::Validate` and
+`validateOneHop` / `resolveLeaf` factoring,
+`verifier/result.go::AliasStep`, `verifier/chain.go::combineVerdicts`,
+`verifier/chain.go::MaxAliasHops`.
+
+**Public API.**
+
+```go
+// verifier
+const MaxAliasHops = 10
+
+type AliasStep struct {
+    Type    string  `json:"type"`     // "cname" | "dname"
+    From    string  `json:"from"`
+    Target  string  `json:"target"`
+    Zone    string  `json:"zone"`
+    Verdict Verdict `json:"verdict"`
+}
+
+type Result struct {
+    // ... existing fields ...
+    Aliases []AliasStep `json:"aliases,omitempty"`
+}
+```
+
+**Design decisions.**
+
+1. **Outer loop over single-hop chain walks.** `Validate` calls
+   `validateOneHop` per redirection, restarting from the root every
+   time. This is wasteful (root, TLD, and often the parent zone are
+   re-walked) but simple, and the `Result.Chain` field is
+   deduplicated by zone name so the audit trail does not balloon. A
+   future cache hook (DESIGN.md SHOULD #13) will eliminate the cost.
+2. **Worst-of verdict combination.**
+   `Bogus > Insecure > Indeterminate > Secure*`. The terminal hop's
+   secure-negative kind (NoData vs NXDomain) is preserved when no
+   stronger negative outcome supersedes it, so callers see the most
+   specific successful classification.
+3. **Loop detection by qname re-occurrence.** Tracking visited qnames
+   in a set catches the common A → CNAME → A "ping-pong" without
+   needing graph algorithms. RFC 1035 does not specify a precise
+   loop rule; most validators settle for hop-count caps plus
+   trivial re-visit detection.
+4. **Hop cap at 10.** BIND uses 16 by default, unbound 12; we pick
+   10 as a tighter default that still serves real-world chains and
+   surfaces pathological cases quickly. The constant is exported as
+   `MaxAliasHops` so callers can read it without depending on the
+   string in `BogusReason`.
+5. **DNAME synthesis follows RFC 6672 §5.3.1 strictly.** A DNAME at
+   owner rewrites every name STRICTLY BELOW owner; a DNAME at qname
+   itself does not synthesise. Mis-synthesis (qname does not end
+   with owner) is treated as Bogus rather than silent fall-through.
+6. **Alias signatures are zone-bound.** A CNAME at qname must verify
+   under the current zone's keys. Cross-zone CNAMEs (where the
+   target is in a different zone) trigger a fresh chain walk for
+   the new qname on the next iteration; the previous zone's
+   signature only had to cover the redirect itself.
+7. **AliasStep carries a per-hop Verdict.** Worst-of combination
+   computes the final verdict, but the per-hop Verdict lets callers
+   pinpoint exactly which hop introduced the Insecure / Bogus
+   contribution. The terminal hop is NOT recorded as an AliasStep
+   (it is the answer itself); only the redirections are.
+8. **No DS lookup for non-cut alias targets.** CNAME / DNAME targets
+   often re-use the same zone or a near neighbour. The existing
+   descend loop's "no DS → not a zone cut" handling continues to
+   work because alias chasing is implemented above that layer.
+
+**TS migration notes.**
+
+- TS already parses CNAME and DNAME owner/value pairs in `zone/`;
+  no new RR types needed.
+- `synthesiseDNAMETarget` is plain label slicing — straightforward
+  to port. The TS implementation should reuse the existing
+  case-insensitive label compare.
+- `Result.Aliases` is the only schema change at this stage. JSON
+  consumers that ignore unknown fields keep working unchanged.
+- A loop-detection set is a `Set<string>` in TS, lowercased to
+  match the canonical form.
+- The 10-hop cap is short enough to inline as a constant. The TS
+  port can pick its own number but should document any deviation.
+
+**Status.** Ships in dnsdata-go v0.2.0 (Week 5). Awaiting an issue on
 dnsdata-js to track the TS port.
 
 ---
