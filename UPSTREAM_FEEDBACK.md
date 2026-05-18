@@ -59,6 +59,7 @@ UF status legend:
 | [UP-004](#up-004) | NSEC / NSEC3 negative-proof primitives + Insecure-delegation + leaf NODATA / NXDOMAIN classification, six-state Verdict | `dnssec/canon.go`, `dnssec/nsec.go`, `dnssec/nsec3.go`, `verifier/negative.go`, `verifier/leaf_negative.go`, `verifier/verdict.go` | [landed-upstream (#22)](https://github.com/shigeya/dnsdata-js/pull/22) |
 | [UP-005](#up-005) | CNAME / DNAME chasing with worst-of verdict combination, alias-loop detection, MaxAliasHops cap, AliasStep records | `verifier/alias.go`, `verifier/chain.go::Validate`, `verifier/result.go::AliasStep` | [landed-upstream (#23)](https://github.com/shigeya/dnsdata-js/pull/23) |
 | [UP-006](#up-006) | Wildcard-synthesised positive answer support: digest target reconstruction (RFC 4035 §5.3.2) + next-closer non-existence proof (§5.3.4), `Result.Wildcard` evidence field | `dnssec/canon.go`, `dnssec/zone.go::CreateDigestTarget`, `verifier/wildcard.go`, `verifier/result.go::WildcardInfo` | [landed-upstream (#24)](https://github.com/shigeya/dnsdata-js/pull/24) |
+| [UP-007](#up-007) | DoH (RFC 8484) client with provider failover, EDNS(0)/DO query builder shared with `resolver/auth`, raw-bytes Query plus parsing Resolve; replaces TS's legacy Google JSON-API client | `resolver/doh/` | in-progress |
 
 UP status legend:
 
@@ -886,6 +887,123 @@ and the `verifier.ts` chain walker. Coverage in
 `tests/lib/verifier_wildcard.spec.ts`.
 
 **Tracking:** landed-upstream — issue [shigeya/dnsdata-js#10](https://github.com/shigeya/dnsdata-js/issues/10), PR [#24](https://github.com/shigeya/dnsdata-js/pull/24).
+
+---
+
+## UP-007
+
+### DoH (RFC 8484) client with provider failover
+
+**Go source:** `resolver/doh/` (`doc.go`, `errors.go`, `client.go`,
+`resolve.go`). Tests in `client_test.go`, `client_internal_test.go`,
+`resolve_test.go`, `resolve_compat_test.go`. Reuses
+`wire.BuildQuery` / `wire.ParseMessage` / `wire.RDataToString` with
+`resolver/auth`.
+
+**Why it matters for TS.** `dnsdata-js` currently ships
+`packages/core/src/cli/resolver_doh.ts`, an old client that talks the
+Google JSON DNS API and is wired only into the legacy `cli/` path. It
+cannot satisfy the new `Verifier.Resolver` contract (which expects
+`ResourceRecord[]` from a wire-format response) and predates the
+shared EDNS(0)/DO query builder landed under UP-003. The Go side
+already ships an RFC 8484 wire-format client; porting it back lets
+the TS verifier consume DoH responses through the same surface as
+the UDP/TCP auth client and unblocks deleting the legacy CLI
+resolver.
+
+**Public API surface.**
+
+```go
+type Client struct{ /* opaque */ }
+
+func NewClient(opts ...Option) *Client
+func (c *Client) Query(ctx context.Context, qname string, qtype uint16) ([]byte, error)
+func (c *Client) QueryRaw(ctx context.Context, query []byte) ([]byte, error)
+func (c *Client) Resolve(ctx context.Context, name string, qtype uint16) ([]*zone.ResourceRecord, error)
+func (c *Client) Providers() []string
+
+type Option func(*Client)
+func WithHTTPClient(hc *http.Client) Option
+func WithProviders(urls ...string) Option
+func WithUserAgent(ua string) Option
+
+func DefaultProviders() []string
+const (
+    DefaultGoogle     = "https://dns.google/dns-query"
+    DefaultCloudflare = "https://cloudflare-dns.com/dns-query"
+    DefaultQuad9      = "https://dns.quad9.net/dns-query"
+    MediaType         = "application/dns-message"
+)
+```
+
+**Design decisions worth carrying back to TS.**
+
+1. **Wire format only.** POST with `Content-Type:
+   application/dns-message`, body is exactly the bytes
+   `wire.BuildQuery` produces, response is the raw DNS message. No
+   JSON shim, no provider-specific parsers — the Google JSON path in
+   `cli/resolver_doh.ts` is the legacy artefact to delete.
+2. **Provider failover, in order.** `WithProviders(google, cf, q9)`
+   (or the default list) is tried left to right. Network errors and
+   non-2xx responses trigger failover; a 2xx with the right
+   Content-Type returns immediately even when the embedded DNS RCODE
+   is non-zero. RCODE != NOERROR is a DNS-level error, not a
+   transport-level one — `Resolve` is what surfaces it as
+   `ErrResolverResponse`.
+3. **Errors compose via `errors.Join`.** `ErrAllProvidersFailed` is
+   joined with the first inner error (`ErrUnexpectedStatus`,
+   `ErrUnexpectedContentType`, or transport error) so
+   `errors.Is(err, ErrAllProvidersFailed)` AND
+   `errors.Is(err, ErrUnexpectedStatus)` both hold simultaneously.
+   In TS the equivalent is subclass + `.cause`, mirroring the
+   `AuthAllServersFailedError` shape from UP-003.
+4. **EDNS(0) + DO bit in every query.** Built once by
+   `wire.BuildQuery`, which is the same function the auth client
+   uses, so the TS port should call the existing `build_query` /
+   `build_query_with_id` rather than re-encoding the OPT record.
+5. **No filesystem, no init() side effects.** Per DESIGN.md MUST
+   NOT 23. TS port should match: no module-load `register_*` calls,
+   no stdout writes — pure transport.
+6. **Authority section is surfaced.** `Resolve` returns answer +
+   authority records concatenated so the verifier can locate
+   NSEC / NSEC3 negative proofs (RFC 4035 §3.1.3). Additional
+   section is intentionally dropped (glue + EDNS OPT, neither part
+   of the validated rrset surface). This is the same shape the
+   auth resolver ships under UP-003.
+7. **HTTP-client injection for tests.** `WithHTTPClient` accepts a
+   stubbed `*http.Client` so `httptest.Server` can drive the
+   coverage. In TS the equivalent is an injected `fetch` function
+   (`fetch_fn?: FetchFn`); production callers get
+   `globalThis.fetch` (Node ≥ 18, browsers), tests pass a stub.
+8. **64 KiB response cap.** `io.LimitReader(resp.Body, 64*1024)`
+   defends against pathological providers. TS port should slice the
+   ArrayBuffer to the same cap.
+
+**TS migration notes.**
+
+- Use Node's built-in `fetch` (≥ 18). The constructor should accept
+  a `FetchFn` for tests and surface a typed error when no fetch is
+  available, instead of crashing at first use.
+- `context.Context` cancellation → `AbortSignal`. Compose the
+  caller's signal with a per-request timeout via `AbortController`.
+- `http.NewRequestWithContext` POST with `Uint8Array` body works
+  out of the box in undici (Node fetch backend).
+- For matching the file split, the natural TS shape is:
+  - `src/lib/resolver/doh/errors.ts` ⇄ `errors.go`
+  - `src/lib/resolver/doh/client.ts` ⇄ `client.go`
+  - `src/lib/resolver/doh/resolve.ts` ⇄ `resolve.go` (via
+    TypeScript declaration merging on `DoHClient.prototype.resolve`)
+  - `src/lib/resolver/doh/index.ts` barrel that imports `resolve.ts`
+    so any consumer pulling `DoHClient` also gets the method.
+- Method value satisfies `verifier.Resolver.query`:
+  `new Verifier({ resolver: { query: client.resolve.bind(client) } })`.
+
+**Status.** Ships in dnsdata-go v0.1.0. Landed in dnsdata-js
+P1 of `REFACTOR_PLAN.md` as `packages/core/src/lib/resolver/doh/`
+with paired spec files under `tests/lib/resolver/doh/`.
+
+**Tracking:** in-progress — port landed locally in dnsdata-js; PR
+not yet opened (P1 of the in-flight dnsdata-js refactor).
 
 ---
 
