@@ -4,7 +4,7 @@ All notable changes to dnsdata-go are recorded here. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.2.2] — 2026-05-18
 
 ### Fixed
 
@@ -206,6 +206,7 @@ These are tracked in `verifier/doc.go` and the relevant UP entries:
 - Cross-call DNSKEY / DS cache (SHOULD #13 in DESIGN.md).
 - Helper converters to `miekg/dns.RR` (MAY #17).
 
+[0.2.2]: https://github.com/shigeya/dnsdata-go/releases/tag/v0.2.2
 [0.2.1]: https://github.com/shigeya/dnsdata-go/releases/tag/v0.2.1
 [0.2.0]: https://github.com/shigeya/dnsdata-go/releases/tag/v0.2.0
 [0.1.0]: https://github.com/shigeya/dnsdata-go/releases/tag/v0.1.0

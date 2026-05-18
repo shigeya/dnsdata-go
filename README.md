@@ -13,7 +13,7 @@ wide-cpp-lib (C++) → dnsdata-js (TypeScript) → dnsdata-go (Go)   ← this re
 
 ## Status
 
-v0.2.1 — full end-to-end DNSSEC chain validation with NSEC / NSEC3
+v0.2.2 — full end-to-end DNSSEC chain validation with NSEC / NSEC3
 negative-proof support, CNAME / DNAME chasing, and wildcard-synthesised
 positive answer validation. Both DoH and plain UDP / TCP transports.
 Pre-release: API surface may still change before v1.0. Primary
@@ -25,7 +25,7 @@ insecure | bogus | indeterminate`. `Result` additionally exposes
 `Aliases` (CNAME / DNAME hops) and `Wildcard` (synthesis evidence)
 when applicable.
 
-Out of scope for v0.2.1 (tracked in `verifier/doc.go`): RFC 5011
+Out of scope for v0.2.2 (tracked in `verifier/doc.go`): RFC 5011
 trust-anchor rollover, DNSKEY / DS rrset caching.
 
 ## Layout
