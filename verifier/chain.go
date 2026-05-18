@@ -188,11 +188,18 @@ func (v *Verifier) validateOneHop(ctx context.Context, qname string, qtype uint1
 				BogusReason: reason,
 			}, nil
 		case descendNoCut:
-			goto leaf
+			// childName is not a zone cut under currentZone — most
+			// often this is qname itself (handled by falling through
+			// to leaf resolution after the loop), but it can also be
+			// an empty non-terminal between two real cuts (e.g.
+			// "ad.jp." between "jp." and "wide.ad.jp."). Continue so
+			// the loop tries deeper descendants against the same
+			// currentZone; descent only finalises when descendantZones
+			// is exhausted, or a real cut is found and verified.
+			continue
 		}
 	}
 
-leaf:
 	if err := ctx.Err(); err != nil {
 		return nil, joinChainErr(err)
 	}

@@ -4,6 +4,22 @@ All notable changes to dnsdata-go are recorded here. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- `verifier`: chain descent no longer terminates at the first non-cut
+  label, so DNSSEC-signed names that live one or more labels below an
+  unsigned intermediate name (typical case: `*.ad.jp`, `*.co.jp`,
+  `*.ne.jp`, `*.kyoto.jp`, …) now validate as Secure instead of being
+  misreported as Bogus at the closest signed ancestor. The descent
+  loop previously `goto`-jumped to the leaf step on the first
+  `descendNoCut` outcome, so e.g. `wide.ad.jp.` was leaf-resolved
+  against `jp.`'s keys (RRSIG-over-leaf failed against the wrong
+  zone). The fix is to `continue` past empty non-terminals and keep
+  walking until a real zone cut is reached or `descendantZones` is
+  exhausted. ([#1](https://github.com/shigeya/dnsdata-go/issues/1))
+
 ## [0.2.1] — 2026-05-18
 
 ### Fixed
