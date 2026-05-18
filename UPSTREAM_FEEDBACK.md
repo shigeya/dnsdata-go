@@ -296,6 +296,20 @@ type Result struct {
    - CNAME / DNAME chasing.
    - RFC 5011 trust-anchor rollover.
    - DNSKEY / DS rrset caching across calls (DESIGN.md SHOULD #13).
+9. **Descent must continue past empty non-terminals.** The descent
+   loop walks `descendantZones(qname)` (e.g.
+   `["jp.", "ad.jp.", "wide.ad.jp."]` for `wide.ad.jp.`). When a
+   parent returns no DS records for a child label AND no NSEC/NSEC3
+   proof of no-DS, the child is not a zone cut and the loop MUST keep
+   iterating to the next deeper descendant — it MUST NOT bail out to
+   leaf resolution, because a deeper label may still be a real cut.
+   See **post-fix gotcha** below: the Go implementation initially
+   short-circuited here, which misclassified every `*.ad.jp` / `*.co.jp`
+   / `*.ne.jp` name as Bogus. Fixed in dnsdata-go
+   [#1](https://github.com/shigeya/dnsdata-go/issues/1). TS port-back
+   must arrive with the same behaviour from day one; add chain-walk
+   tests for at least one multi-label TLD case (e.g. signed
+   `wide.ad.jp.` under empty-non-terminal `ad.jp.`).
 
 **TS migration notes.**
 

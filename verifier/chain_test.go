@@ -309,6 +309,110 @@ func TestValidate_ChainTimeout(t *testing.T) {
 	}
 }
 
+// TestValidate_Secure_DescendsAcrossEmptyNonTerminal exercises the
+// "multi-label TLD" case that motivated issue #1: a chain where one or
+// more labels between two real zone cuts are empty non-terminals (the
+// parent zone holds neither DS nor a no-DS proof for them).
+//
+// Chain shape: root → jp. → wide.ad.jp. Asking for wide.ad.jp./A must
+// produce Secure with the wide.ad.jp. zone in the chain — before the
+// fix, descent terminated on the "no cut at ad.jp." step (descendNoCut)
+// and the leaf was resolved against jp.'s keys, producing Bogus at jp..
+func TestValidate_Secure_DescendsAcrossEmptyNonTerminal(t *testing.T) {
+	inception := time.Now().Add(-1 * time.Hour).Unix()
+	expire := time.Now().Add(24 * time.Hour).Unix()
+
+	root := newSignedZone(t, ".", inception, expire)
+	jp := newSignedZone(t, "jp.", inception, expire)
+	wideAdJp := newSignedZone(t, "wide.ad.jp.", inception, expire)
+
+	addAndSignDS(t, root, "jp.", jp.key, inception, expire)
+	addAndSignDS(t, jp, "wide.ad.jp.", wideAdJp.key, inception, expire)
+
+	wideAdJp.addSignedRR(t, "wide.ad.jp.", 300, types.TypeA, "192.0.2.42", inception, expire)
+
+	// ad.jp. is an empty non-terminal: jp. holds no DS for it AND no
+	// NSEC/NSEC3 proof. (Real authoritative servers return a matching
+	// NSEC3 with an empty bitmap; the chain-descent fix only requires
+	// that "no DS, no proof" continue rather than abort.)
+	resp := map[lookupKey][]*zone.ResourceRecord{
+		{".", types.TypeDNSKEY}:           rrsetWithSigs(root.z, ".", types.TypeDNSKEY),
+		{"jp.", types.TypeDS}:             rrsetWithSigs(root.z, "jp.", types.TypeDS),
+		{"jp.", types.TypeDNSKEY}:         rrsetWithSigs(jp.z, "jp.", types.TypeDNSKEY),
+		{"ad.jp.", types.TypeDS}:          nil,
+		{"wide.ad.jp.", types.TypeDS}:     rrsetWithSigs(jp.z, "wide.ad.jp.", types.TypeDS),
+		{"wide.ad.jp.", types.TypeDNSKEY}: rrsetWithSigs(wideAdJp.z, "wide.ad.jp.", types.TypeDNSKEY),
+		{"wide.ad.jp.", types.TypeA}:      rrsetWithSigs(wideAdJp.z, "wide.ad.jp.", types.TypeA),
+	}
+	resolver := &mockResolver{responses: resp}
+	v, err := verifier.NewVerifier(
+		verifier.WithResolver(resolver),
+		verifier.WithTrustAnchors(makeTrustAnchor(t, root.key)),
+	)
+	if err != nil {
+		t.Fatalf("NewVerifier: %v", err)
+	}
+	res, err := v.Validate(context.Background(), "wide.ad.jp.", types.TypeA)
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if res.Verdict != verifier.VerdictSecure {
+		t.Errorf("Verdict = %s, want secure (BogusAt=%q reason=%q)",
+			res.Verdict, res.BogusAt, res.BogusReason)
+	}
+	if len(res.Chain) != 3 {
+		t.Errorf("Chain length = %d, want 3 (root, jp., wide.ad.jp.); chain=%+v", len(res.Chain), res.Chain)
+	}
+	// The deepest zone in the chain must be wide.ad.jp., not jp..
+	// Before the fix the chain ended at jp..
+	last := res.Chain[len(res.Chain)-1].Zone
+	if last != "wide.ad.jp." {
+		t.Errorf("last zone in chain = %q, want wide.ad.jp.", last)
+	}
+}
+
+// TestValidate_Secure_DescendsAcrossEmptyNonTerminal_DeepLeaf is the
+// deeper analogue: the leaf qname sits two cuts below the highest cut,
+// so descendantZones produces a no-cut hop in the middle AND another
+// no-cut hop at qname itself. The fix must allow both to continue.
+func TestValidate_Secure_DescendsAcrossEmptyNonTerminal_DeepLeaf(t *testing.T) {
+	inception := time.Now().Add(-1 * time.Hour).Unix()
+	expire := time.Now().Add(24 * time.Hour).Unix()
+
+	root := newSignedZone(t, ".", inception, expire)
+	jp := newSignedZone(t, "jp.", inception, expire)
+	wideAdJp := newSignedZone(t, "wide.ad.jp.", inception, expire)
+
+	addAndSignDS(t, root, "jp.", jp.key, inception, expire)
+	addAndSignDS(t, jp, "wide.ad.jp.", wideAdJp.key, inception, expire)
+
+	wideAdJp.addSignedRR(t, "sfc.wide.ad.jp.", 300, types.TypeA, "192.0.2.7", inception, expire)
+
+	resp := map[lookupKey][]*zone.ResourceRecord{
+		{".", types.TypeDNSKEY}:               rrsetWithSigs(root.z, ".", types.TypeDNSKEY),
+		{"jp.", types.TypeDS}:                 rrsetWithSigs(root.z, "jp.", types.TypeDS),
+		{"jp.", types.TypeDNSKEY}:             rrsetWithSigs(jp.z, "jp.", types.TypeDNSKEY),
+		{"ad.jp.", types.TypeDS}:              nil,
+		{"wide.ad.jp.", types.TypeDS}:         rrsetWithSigs(jp.z, "wide.ad.jp.", types.TypeDS),
+		{"wide.ad.jp.", types.TypeDNSKEY}:     rrsetWithSigs(wideAdJp.z, "wide.ad.jp.", types.TypeDNSKEY),
+		{"sfc.wide.ad.jp.", types.TypeDS}:     nil,
+		{"sfc.wide.ad.jp.", types.TypeA}:      rrsetWithSigs(wideAdJp.z, "sfc.wide.ad.jp.", types.TypeA),
+	}
+	resolver := &mockResolver{responses: resp}
+	v, _ := verifier.NewVerifier(
+		verifier.WithResolver(resolver),
+		verifier.WithTrustAnchors(makeTrustAnchor(t, root.key)),
+	)
+	res, err := v.Validate(context.Background(), "sfc.wide.ad.jp.", types.TypeA)
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if res.Verdict != verifier.VerdictSecure {
+		t.Errorf("Verdict = %s, want secure (BogusAt=%q reason=%q)",
+			res.Verdict, res.BogusAt, res.BogusReason)
+	}
+}
+
 func TestNewVerifier_RequiresResolver(t *testing.T) {
 	_, err := verifier.NewVerifier()
 	if !errors.Is(err, verifier.ErrConfig) {
