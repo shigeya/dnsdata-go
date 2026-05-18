@@ -10,6 +10,12 @@ Lineage:
 wide-cpp-lib (C++) → dnsdata-js (TypeScript) → dnsdata-go (Go)   ← here
 ```
 
+`dnsdata-go` and [`dnsdata-js`](https://github.com/shigeya/dnsdata-js) are
+now maintained as equal sibling implementations — see the README's
+[Sibling implementation](./README.md#sibling-implementation) section for the
+co-development model (originator tags, drift policy, cross-repo module
+mapping).
+
 - Module path: `github.com/shigeya/dnsdata-go`
 - Crypto: Go standard library only (`crypto/rsa`, `crypto/ecdsa`,
   `crypto/ed25519`, `crypto/sha256`, …).
@@ -94,6 +100,11 @@ When this section changes, both repos' DESIGN.md must be updated together.
 
 ## 5. Porting policy
 
+Code flows in both directions under the sibling model (see README's
+[Sibling implementation](./README.md#sibling-implementation) section). The
+rules below cover the dominant TS → Go case; symmetric rules apply when
+porting Go-originated functionality back to TS.
+
 - Port one TS function to one Go function (no opportunistic redesign).
 - TS `RangeError` becomes a Go `error` return value, not a `panic`.
 - TS `Uint8Array` becomes `[]byte`.
@@ -104,8 +115,9 @@ When this section changes, both repos' DESIGN.md must be updated together.
 
 When you notice a TS-side bug, robustness gap, or API-shape issue during
 porting, record it in [`UPSTREAM_FEEDBACK.md`](./UPSTREAM_FEEDBACK.md) with a
-`UF-NNN` ID. That file is the reverse-direction (Go → TS) feedback channel and
-is eventually transcribed into dnsdata-js issues / PRs.
+`UF-NNN` ID. New functionality that originates in Go and should be
+port-backed to TS is catalogued in the same file as `UP-NNN` entries.
+Both flavours feed dnsdata-js issues / PRs.
 
 ## 6. Roadmap
 

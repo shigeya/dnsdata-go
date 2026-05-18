@@ -47,8 +47,14 @@ value should become a typed `error`.
 If you spot a bug, robustness gap, or API-shape issue in the TS source while
 porting, and you change behaviour on the Go side as a result, **record it in
 `UPSTREAM_FEEDBACK.md` with a `UF-NNN` ID**. Deviation comments on the Go side
-(`wire/doc.go`, etc.) should cross-reference that ID. This is the
-reverse-direction (Go → TS) feedback channel.
+(`wire/doc.go`, etc.) should cross-reference that ID. `UPSTREAM_FEEDBACK.md`
+is the Go-side catalogue of the Go ↔ TS sibling feedback channel — see the
+[Sibling implementation](./README.md#sibling-implementation) section of
+README.md for the underlying co-development model.
+
+For new functionality that originates in Go and should be port-backed to TS,
+file a `UP-NNN` entry in the same file. Both flavours flow into dnsdata-js
+issues / PRs.
 
 ## Work in progress
 
