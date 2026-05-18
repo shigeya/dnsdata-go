@@ -53,12 +53,12 @@ UF status legend:
 
 | ID | Description | dnsdata-go source | Status |
 |---|---|---|---|
-| [UP-001](#up-001) | DNSSEC chain validator with pluggable Resolver, four-state Verdict, and JSON-friendly Result | `verifier/` | [filed (#5)](https://github.com/shigeya/dnsdata-js/issues/5) |
-| [UP-002](#up-002) | DNS message wire-format parser + RDATA-to-presentation decoders, kept in `wire/` so packages stay acyclic | `wire/message.go`, `wire/rdata.go`, `wire/name_decompress.go` | [filed (#6)](https://github.com/shigeya/dnsdata-js/issues/6) |
-| [UP-003](#up-003) | UDP+TCP authoritative-DNS client with TC-flag fallback and multi-server failover, sharing the EDNS / DO query builder with the DoH client | `resolver/auth/` | [filed (#7)](https://github.com/shigeya/dnsdata-js/issues/7) |
-| [UP-004](#up-004) | NSEC / NSEC3 negative-proof primitives + Insecure-delegation + leaf NODATA / NXDOMAIN classification, six-state Verdict | `dnssec/canon.go`, `dnssec/nsec.go`, `dnssec/nsec3.go`, `verifier/negative.go`, `verifier/leaf_negative.go`, `verifier/verdict.go` | [filed (#8)](https://github.com/shigeya/dnsdata-js/issues/8) |
-| [UP-005](#up-005) | CNAME / DNAME chasing with worst-of verdict combination, alias-loop detection, MaxAliasHops cap, AliasStep records | `verifier/alias.go`, `verifier/chain.go::Validate`, `verifier/result.go::AliasStep` | [filed (#9)](https://github.com/shigeya/dnsdata-js/issues/9) |
-| [UP-006](#up-006) | Wildcard-synthesised positive answer support: digest target reconstruction (RFC 4035 §5.3.2) + next-closer non-existence proof (§5.3.4), `Result.Wildcard` evidence field | `dnssec/canon.go`, `dnssec/zone.go::CreateDigestTarget`, `verifier/wildcard.go`, `verifier/result.go::WildcardInfo` | [filed (#10)](https://github.com/shigeya/dnsdata-js/issues/10) |
+| [UP-001](#up-001) | DNSSEC chain validator with pluggable Resolver, four-state Verdict, and JSON-friendly Result | `verifier/` | [landed-upstream (#17)](https://github.com/shigeya/dnsdata-js/pull/17) |
+| [UP-002](#up-002) | DNS message wire-format parser + RDATA-to-presentation decoders, kept in `wire/` so packages stay acyclic | `wire/message.go`, `wire/rdata.go`, `wire/name_decompress.go` | [landed-upstream (#19)](https://github.com/shigeya/dnsdata-js/pull/19) |
+| [UP-003](#up-003) | UDP+TCP authoritative-DNS client with TC-flag fallback and multi-server failover, sharing the EDNS / DO query builder with the DoH client | `resolver/auth/` | [landed-upstream (#21)](https://github.com/shigeya/dnsdata-js/pull/21) |
+| [UP-004](#up-004) | NSEC / NSEC3 negative-proof primitives + Insecure-delegation + leaf NODATA / NXDOMAIN classification, six-state Verdict | `dnssec/canon.go`, `dnssec/nsec.go`, `dnssec/nsec3.go`, `verifier/negative.go`, `verifier/leaf_negative.go`, `verifier/verdict.go` | [landed-upstream (#22)](https://github.com/shigeya/dnsdata-js/pull/22) |
+| [UP-005](#up-005) | CNAME / DNAME chasing with worst-of verdict combination, alias-loop detection, MaxAliasHops cap, AliasStep records | `verifier/alias.go`, `verifier/chain.go::Validate`, `verifier/result.go::AliasStep` | [landed-upstream (#23)](https://github.com/shigeya/dnsdata-js/pull/23) |
+| [UP-006](#up-006) | Wildcard-synthesised positive answer support: digest target reconstruction (RFC 4035 §5.3.2) + next-closer non-existence proof (§5.3.4), `Result.Wildcard` evidence field | `dnssec/canon.go`, `dnssec/zone.go::CreateDigestTarget`, `verifier/wildcard.go`, `verifier/result.go::WildcardInfo` | [landed-upstream (#24)](https://github.com/shigeya/dnsdata-js/pull/24) |
 
 UP status legend:
 
@@ -338,9 +338,11 @@ type Result struct {
   memory and threads them through a mock Resolver. TS can do the same once
   `dnssec_zone.ts`'s `sign_rr` method gains a Resolver-shaped consumer.
 
-**Status.** Ships in dnsdata-go v0.1.0 (Week 3).
+**Status.** Ships in dnsdata-go v0.1.0 (Week 3). Landed in dnsdata-js
+[#17](https://github.com/shigeya/dnsdata-js/pull/17) as
+`packages/core/src/lib/verifier.ts` + `tests/lib/verifier.spec.ts`.
 
-**Tracking:** [shigeya/dnsdata-js#5](https://github.com/shigeya/dnsdata-js/issues/5)
+**Tracking:** landed-upstream — issue [shigeya/dnsdata-js#5](https://github.com/shigeya/dnsdata-js/issues/5), PR [#17](https://github.com/shigeya/dnsdata-js/pull/17).
 
 ---
 
@@ -442,9 +444,12 @@ SOA, SRV, CAA, DNSKEY, CDNSKEY, DS, CDS, RRSIG, NSEC, NSEC3, NSEC3PARAM.
   recursive implementation in TS would also need the same hop cap; pick 32
   to match.
 
-**Status.** Ships in dnsdata-go v0.1.0 (Week 3).
+**Status.** Ships in dnsdata-go v0.1.0 (Week 3). Landed in dnsdata-js
+[#19](https://github.com/shigeya/dnsdata-js/pull/19) as
+`packages/core/src/lib/dns_message.ts` +
+`packages/core/src/lib/rdata_decoder.ts` (with paired spec files).
 
-**Tracking:** [shigeya/dnsdata-js#6](https://github.com/shigeya/dnsdata-js/issues/6)
+**Tracking:** landed-upstream — issue [shigeya/dnsdata-js#6](https://github.com/shigeya/dnsdata-js/issues/6), PR [#19](https://github.com/shigeya/dnsdata-js/pull/19).
 
 ---
 
@@ -530,9 +535,11 @@ func NormalizeAddr(addr string) string
   hook it into `socket.close()` on UDP and `connection.destroy()` on
   TCP for the deadline path.
 
-**Status.** Ships in dnsdata-go v0.1.0 (Week 3).
+**Status.** Ships in dnsdata-go v0.1.0 (Week 3). Landed in dnsdata-js
+[#21](https://github.com/shigeya/dnsdata-js/pull/21) as
+`packages/core/src/lib/resolver_auth.ts` (with paired spec file).
 
-**Tracking:** [shigeya/dnsdata-js#7](https://github.com/shigeya/dnsdata-js/issues/7)
+**Tracking:** landed-upstream — issue [shigeya/dnsdata-js#7](https://github.com/shigeya/dnsdata-js/issues/7), PR [#21](https://github.com/shigeya/dnsdata-js/pull/21).
 
 ---
 
@@ -677,9 +684,13 @@ type Result struct {
   hashing each) is straightforward in TS once `ComputeNSEC3Hash` is
   ported. Wildcard prefixing is plain string concatenation.
 
-**Status.** Ships in dnsdata-go v0.2.0 (Week 4).
+**Status.** Ships in dnsdata-go v0.2.0 (Week 4). Landed in dnsdata-js
+[#22](https://github.com/shigeya/dnsdata-js/pull/22) — the canonical-name
+helpers ship as `packages/core/src/lib/dnssec_util.ts`; the NSEC /
+NSEC3 primitives extend the existing `dnssec_rr.ts` types. Coverage in
+`tests/lib/dnssec_negative.spec.ts` + `tests/lib/dnssec_util.spec.ts`.
 
-**Tracking:** [shigeya/dnsdata-js#8](https://github.com/shigeya/dnsdata-js/issues/8)
+**Tracking:** landed-upstream — issue [shigeya/dnsdata-js#8](https://github.com/shigeya/dnsdata-js/issues/8), PR [#22](https://github.com/shigeya/dnsdata-js/pull/22).
 
 ---
 
@@ -771,9 +782,12 @@ type Result struct {
 - The 10-hop cap is short enough to inline as a constant. The TS
   port can pick its own number but should document any deviation.
 
-**Status.** Ships in dnsdata-go v0.2.0 (Week 5).
+**Status.** Ships in dnsdata-go v0.2.0 (Week 5). Landed in dnsdata-js
+[#23](https://github.com/shigeya/dnsdata-js/pull/23); CNAME / DNAME
+chasing extends the existing `verifier.ts` chain walker rather than
+introducing a new module.
 
-**Tracking:** [shigeya/dnsdata-js#9](https://github.com/shigeya/dnsdata-js/issues/9)
+**Tracking:** landed-upstream — issue [shigeya/dnsdata-js#9](https://github.com/shigeya/dnsdata-js/issues/9), PR [#23](https://github.com/shigeya/dnsdata-js/pull/23).
 
 ---
 
@@ -865,9 +879,13 @@ type Result struct {
 - The `WildcardInfo` JSON shape is small and additive; consumers
   ignoring unknown fields keep working unchanged.
 
-**Status.** Ships in dnsdata-go v0.2.0 (Week 6).
+**Status.** Ships in dnsdata-go v0.2.0 (Week 6). Landed in dnsdata-js
+[#24](https://github.com/shigeya/dnsdata-js/pull/24); wildcard
+synthesis extends the existing `dnssec_zone.ts` digest-target builder
+and the `verifier.ts` chain walker. Coverage in
+`tests/lib/verifier_wildcard.spec.ts`.
 
-**Tracking:** [shigeya/dnsdata-js#10](https://github.com/shigeya/dnsdata-js/issues/10)
+**Tracking:** landed-upstream — issue [shigeya/dnsdata-js#10](https://github.com/shigeya/dnsdata-js/issues/10), PR [#24](https://github.com/shigeya/dnsdata-js/pull/24).
 
 ---
 

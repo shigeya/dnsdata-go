@@ -120,9 +120,10 @@ mechanical:
 | `dns_zone.ts`                       | `zone/rr.go`, `zone/zone.go` | `ResourceRecord`, `Zone`, handler registry |
 | `dnssec_zone.ts`                    | `dnssec/zone.go`           | Chain-of-trust verification helpers, canonical digest target |
 | `dnssec_rr.ts`                      | `dnssec/{dnskey,rrsig,ds,nsec,nsec3}.go` | `DNSKey`, `RRSig`, `DNSRR_DS`, `DNSRR_NSEC`, `DNSRR_NSEC3` |
-| `verifier.ts`                       | `verifier/`                | Chain-of-trust walker with pluggable `Resolver` |
+| `dnssec_util.ts`                    | `dnssec/canon.go`          | Canonical-name compare + `LabelCount` / `LastNLabels` (UP-004) |
+| `verifier.ts`                       | `verifier/`                | Chain-of-trust walker with pluggable `Resolver` (UP-001, UP-005, UP-006) |
 | `dns_type_table.ts`                 | `types/`                   | RR-type / class / rcode / algorithm tables |
-| (none yet)                          | `resolver/auth/`           | UDP / TCP authoritative-DNS client (UP-003) |
+| `resolver_auth.ts`                  | `resolver/auth/`           | UDP / TCP authoritative-DNS client (UP-003) |
 | `dnssec_key_loader.ts`              | `dnssec/anchors.go`        | Root trust anchors |
 
 ### Drift policy
