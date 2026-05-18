@@ -4,6 +4,23 @@ All notable changes to dnsdata-go are recorded here. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- `resolver/{doh,auth}.Resolve` now surface the authority section of
+  the response in addition to the answer section. The previous
+  implementation intentionally dropped authority records, which silently
+  disabled the v0.2.0 NSEC / NSEC3 negative-proof support: a verifier
+  built on top of these resolvers could not locate the no-DS proof in
+  the parent zone's response, so any unsigned name under an NSEC3-with-
+  opt-out zone (e.g. an unsigned `.com` child) was misclassified as
+  Bogus rather than Insecure. The additional section is still ignored
+  (glue / EDNS OPT are not part of the validated rrset surface).
+  Discovered while integrating dnsdata-go into mailsec-probe; verified
+  against `google.com` / `amazon.com` (now Insecure) and
+  `iana.org` / `cloudflare.com` / `example.com` (still Secure).
+
 ## [0.2.0] — 2026-05-17
 
 Negative-proof support and alias / wildcard chasing. The chain

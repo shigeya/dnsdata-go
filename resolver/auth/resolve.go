@@ -15,8 +15,13 @@ import (
 var ErrResolverResponse = errors.New("auth: bad response")
 
 // Resolve runs a DNS query for (name, qtype), parses the response,
-// and returns its answer section as presentation-form
-// [zone.ResourceRecord] values.
+// and returns its answer + authority section records as
+// presentation-form [zone.ResourceRecord] values.
+//
+// Both sections are included so the verifier can locate NSEC / NSEC3
+// negative proofs (RFC 4035 §3.1.3 places those in the authority
+// section). The additional section is ignored — it carries glue and
+// EDNS OPT, neither of which is part of the validated rrset surface.
 //
 // The method value satisfies [verifier.ResolverFunc] so the auth
 // client can be passed directly to `verifier.NewVerifier`:
@@ -39,17 +44,32 @@ func (c *Client) Resolve(ctx context.Context, name string, qtype uint16) ([]*zon
 		return nil, fmt.Errorf("%w: RCODE=%d", ErrResolverResponse, rc)
 	}
 
-	out := make([]*zone.ResourceRecord, 0, len(msg.Answer))
+	out := make([]*zone.ResourceRecord, 0, len(msg.Answer)+len(msg.Authority))
 	for _, rr := range msg.Answer {
-		value, err := wire.RDataToString(msg.Raw, rr.Type, rr.RData, rr.RDataStart)
+		rec, err := rawRRToResourceRecord(msg.Raw, rr)
 		if err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrResolverResponse, err)
+			return nil, err
 		}
-		rec, err := zone.NewResourceRecord(rr.Name, rr.TTL, rr.Class, rr.Type, value)
+		out = append(out, rec)
+	}
+	for _, rr := range msg.Authority {
+		rec, err := rawRRToResourceRecord(msg.Raw, rr)
 		if err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrResolverResponse, err)
+			return nil, err
 		}
 		out = append(out, rec)
 	}
 	return out, nil
+}
+
+func rawRRToResourceRecord(raw []byte, rr wire.RawRR) (*zone.ResourceRecord, error) {
+	value, err := wire.RDataToString(raw, rr.Type, rr.RData, rr.RDataStart)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrResolverResponse, err)
+	}
+	rec, err := zone.NewResourceRecord(rr.Name, rr.TTL, rr.Class, rr.Type, value)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrResolverResponse, err)
+	}
+	return rec, nil
 }

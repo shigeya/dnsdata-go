@@ -273,6 +273,63 @@ func TestClient_Resolve_HappyPath(t *testing.T) {
 	}
 }
 
+// buildResponseWithAuthority returns a response carrying one answer
+// and one authority record. Used to verify the Authority section
+// survives Resolve so the verifier can locate NSEC / NSEC3 proofs.
+func buildResponseWithAuthority(t *testing.T, query []byte, qname string, qtype uint16, answerRData []byte, authOwner string, authType uint16, authRData []byte) []byte {
+	t.Helper()
+	queryID := binary.BigEndian.Uint16(query[0:2])
+	var b wire.Builder
+	b.AppendUint16(queryID)
+	b.AppendUint16(0x8180)
+	b.AppendUint16(1) // QDCOUNT
+	b.AppendUint16(1) // ANCOUNT
+	b.AppendUint16(1) // NSCOUNT
+	b.AppendUint16(0)
+	qw, _ := wire.DomainNameToWire(qname)
+	b.AppendBytes(qw)
+	b.AppendUint16(qtype)
+	b.AppendUint16(types.ClassIN)
+	b.AppendBytes(qw)
+	b.AppendUint16(qtype)
+	b.AppendUint16(types.ClassIN)
+	b.AppendUint32(60)
+	b.AppendUint16(uint16(len(answerRData)))
+	b.AppendBytes(answerRData)
+	aw, _ := wire.DomainNameToWire(authOwner)
+	b.AppendBytes(aw)
+	b.AppendUint16(authType)
+	b.AppendUint16(types.ClassIN)
+	b.AppendUint32(3600)
+	b.AppendUint16(uint16(len(authRData)))
+	b.AppendBytes(authRData)
+	return b.Clone()
+}
+
+func TestClient_Resolve_IncludesAuthoritySection(t *testing.T) {
+	nsTargetWire, _ := wire.DomainNameToWire("ns.example.com.")
+	addr := startUDPListener(t, func(query []byte) []byte {
+		return buildResponseWithAuthority(t, query, "www.example.com.", types.TypeA,
+			[]byte{192, 0, 2, 1},
+			"example.com.", types.TypeNS, nsTargetWire,
+		)
+	})
+	c := auth.NewClient(auth.WithServers(addr), auth.WithTimeout(500*time.Millisecond))
+	records, err := c.Resolve(context.Background(), "www.example.com.", types.TypeA)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("records = %d, want 2 (answer + authority)", len(records))
+	}
+	if records[0].Type != types.TypeA || records[0].Label != "www.example.com." {
+		t.Errorf("answer = (%q, %d), want (www.example.com., A)", records[0].Label, records[0].Type)
+	}
+	if records[1].Type != types.TypeNS || records[1].Label != "example.com." {
+		t.Errorf("authority = (%q, %d), want (example.com., NS)", records[1].Label, records[1].Type)
+	}
+}
+
 func TestClient_Resolve_RCODE(t *testing.T) {
 	addr := startUDPListener(t, func(query []byte) []byte {
 		queryID := binary.BigEndian.Uint16(query[0:2])
