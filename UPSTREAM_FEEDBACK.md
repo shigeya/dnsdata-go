@@ -1,19 +1,35 @@
 # UPSTREAM_FEEDBACK.md
 
-Items discovered while implementing dnsdata-go that **should be reflected back
-into dnsdata-js (TypeScript)**. The reverse-direction (Go → TS) feedback channel
-for co-design.
+The Go-side catalogue of the Go ↔ TS feedback channel for the
+[`dnsdata-go`](https://github.com/shigeya/dnsdata-go) ↔
+[`dnsdata-js`](https://github.com/shigeya/dnsdata-js) sibling
+implementations. See the
+[Sibling implementation](./README.md#sibling-implementation) section of
+README.md for the underlying model: both repos are first-class, neither is
+permanently "upstream", and either side may originate a new feature or
+surface a bug fix.
+
+The file name is retained for backward link compatibility (existing
+`UF-NNN` / `UP-NNN` references in commit messages, tests, and code
+comments). Under the sibling model, the word "upstream" in `fixed-upstream`
+simply means "the repo on the other side of this channel" — `dnsdata-js`
+from here, `dnsdata-go` from there.
+
+This file lists items observed from the **Go side** that should land in
+**TS**. Items observed in the opposite direction (TS → Go) are filed as
+issues directly on the dnsdata-go repo until a mirror catalogue exists in
+dnsdata-js.
 
 There are two flavours of entry:
 
 - **UF-NNN — Feedback** items report bugs / robustness gaps / API-shape problems
-  in the existing TS source that the Go port had to deviate from. Once an item
+  in the existing TS source that the Go side does not share. Once an item
   reaches `fixed-upstream`, the corresponding Go-side deviation comment may be
   removed.
-- **UP-NNN — Proposals** items describe **new functionality** the Go port
-  shipped that does **not** yet exist in TS. They are roadmap notes for porting
-  the new surface back, not bug reports. Status meanings are slightly different
-  for proposals (see legend below).
+- **UP-NNN — Proposals** items describe **new functionality** that originated
+  in `dnsdata-go` and does **not** yet exist in TS. They are roadmap notes for
+  porting the new surface back, not bug reports. Status meanings are slightly
+  different for proposals (see legend below).
 
 Each item is intended to be transcribed into a dnsdata-js issue / PR /
 DESIGN.md change.
