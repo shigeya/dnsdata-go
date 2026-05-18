@@ -22,10 +22,10 @@ DESIGN.md change.
 
 | ID | Description | TS source | Type | Status |
 |---|---|---|---|---|
-| [UF-001](#uf-001) | `domain_name2wire`'s `\| 0x20` lowercase corrupts the underscore byte (0x5F → 0x7F) | `dns_wire.ts:16` | bug | [filed (#1)](https://github.com/shigeya/dnsdata-js/issues/1) |
-| [UF-002](#uf-002) | No label / name length validation | `dns_wire.ts:1-32` | robustness | [filed (#2)](https://github.com/shigeya/dnsdata-js/issues/2) |
-| [UF-003](#uf-003) | Unknown enum inputs throw bare `RangeError`; no typed classification | `dns_type_table.ts:18,31,59,86,…` | api-shape | [filed (#3)](https://github.com/shigeya/dnsdata-js/issues/3) |
-| [UF-004](#uf-004) | `ResourceRecord.get_wire_body` silently emits nothing when RDATA parse fails | `dns_zone.ts:175-295` | robustness | [filed (#4)](https://github.com/shigeya/dnsdata-js/issues/4) |
+| [UF-001](#uf-001) | `domain_name2wire`'s `\| 0x20` lowercase corrupts the underscore byte (0x5F → 0x7F) | `dns_wire.ts:16` | bug | [fixed-upstream (#11)](https://github.com/shigeya/dnsdata-js/pull/11) |
+| [UF-002](#uf-002) | No label / name length validation | `dns_wire.ts:1-32` | robustness | [fixed-upstream (#14)](https://github.com/shigeya/dnsdata-js/pull/14) |
+| [UF-003](#uf-003) | Unknown enum inputs throw bare `RangeError`; no typed classification | `dns_type_table.ts:18,31,59,86,…` | api-shape | [fixed-upstream (#16)](https://github.com/shigeya/dnsdata-js/pull/16) |
+| [UF-004](#uf-004) | `ResourceRecord.get_wire_body` silently emits nothing when RDATA parse fails | `dns_zone.ts:175-295` | robustness | [fixed-upstream (#15)](https://github.com/shigeya/dnsdata-js/pull/15) |
 
 UF status legend:
 
@@ -90,7 +90,7 @@ Add a `_dmarc.example.com.` round-trip case to `tests/lib/dns_wire.spec.ts`.
 
 **See also:** `wire/name.go`, `wire/doc.go`, `TestDomainNameToWire_Underscore`.
 
-**Tracking:** [shigeya/dnsdata-js#1](https://github.com/shigeya/dnsdata-js/issues/1)
+**Tracking:** fixed in [shigeya/dnsdata-js#11](https://github.com/shigeya/dnsdata-js/pull/11) (closes [#1](https://github.com/shigeya/dnsdata-js/issues/1)).
 
 ---
 
@@ -124,7 +124,7 @@ than the declared label length (truncation).
 `TestDomainNameToWire_NameTooLong`, `TestWireToDomainName_Compressed`,
 `TestWireToDomainName_Truncated`.
 
-**Tracking:** [shigeya/dnsdata-js#2](https://github.com/shigeya/dnsdata-js/issues/2)
+**Tracking:** fixed in [shigeya/dnsdata-js#14](https://github.com/shigeya/dnsdata-js/pull/14) (closes [#2](https://github.com/shigeya/dnsdata-js/issues/2)).
 
 ---
 
@@ -170,7 +170,7 @@ export class UnknownOpCodeError extends RangeError {
 
 **See also:** `types/errors.go`, the `_Unknown` cases in `types/*_test.go`.
 
-**Tracking:** [shigeya/dnsdata-js#3](https://github.com/shigeya/dnsdata-js/issues/3)
+**Tracking:** fixed in [shigeya/dnsdata-js#16](https://github.com/shigeya/dnsdata-js/pull/16) (closes [#3](https://github.com/shigeya/dnsdata-js/issues/3)).
 
 ---
 
@@ -209,7 +209,7 @@ the easiest path.
 (`TestWireBody_MalformedAReturnsError`, `TestWireBody_MalformedMXReturnsError`,
 `TestWireBody_UnsupportedTypeIsNoOp`).
 
-**Tracking:** [shigeya/dnsdata-js#4](https://github.com/shigeya/dnsdata-js/issues/4)
+**Tracking:** fixed in [shigeya/dnsdata-js#15](https://github.com/shigeya/dnsdata-js/pull/15) (closes [#4](https://github.com/shigeya/dnsdata-js/issues/4)).
 
 ---
 

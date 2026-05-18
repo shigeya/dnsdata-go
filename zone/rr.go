@@ -157,10 +157,9 @@ func (rr *ResourceRecord) WireHeader(b *wire.Builder) error {
 // handler exists it is delegated to; otherwise the built-in encoders for
 // A / NS / CNAME / SOA / PTR / DNAME / MX / TXT / AAAA / SRV / CAA are used.
 //
-// For types without a built-in or registered encoder the call is a no-op
-// (matches the TS source). Returns [ErrRDataFormat] when an encoder
-// recognises the type but the value is malformed; deviation from the TS
-// source, which silently emits nothing in that case.
+// For types without a built-in or registered encoder the call is a no-op.
+// Returns [ErrRDataFormat] when an encoder recognises the type but the
+// value is malformed.
 func (rr *ResourceRecord) WireBody(b *wire.Builder) error {
 	if h := rr.Handler(); h != nil {
 		return h.WireBody(b)
