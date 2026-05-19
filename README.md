@@ -18,14 +18,16 @@ parallel — see [`docs/SIBLING.md`](docs/SIBLING.md). Both descend from
 
 ## Status
 
-v0.3.0 — full end-to-end DNSSEC chain validation with NSEC / NSEC3
+v0.3.1 — full end-to-end DNSSEC chain validation with NSEC / NSEC3
 negative-proof support, CNAME / DNAME chasing, and wildcard-synthesised
 positive answer validation. Both DoH and plain UDP / TCP transports.
-v0.3.0 adds the P9 RR handler set (TLSA, SMIMEA, SSHFP, OPENPGPKEY,
-CERT, URI, HINFO, RP, EUI48, EUI64, CSYNC, LOC, NAPTR, SVCB, HTTPS)
-plus an EDNS(0) OPT codec — all reachable through the opt-in
-`zone.RegisterHandlers()` entrypoint. Pre-release: API surface may
-still change before v1.0. Primary consumer is
+The default DoH provider order is **Cloudflare → Google → Quad9**
+(see `resolver/doh` package doc for the rationale). v0.3.0 added the
+P9 RR handler set (TLSA, SMIMEA, SSHFP, OPENPGPKEY, CERT, URI, HINFO,
+RP, EUI48, EUI64, CSYNC, LOC, NAPTR, SVCB, HTTPS) plus an EDNS(0) OPT
+codec — all reachable through the opt-in `zone.RegisterHandlers()`
+entrypoint. Pre-release: API surface may still change before v1.0.
+Primary consumer is
 [`mailsec-probe`](https://github.com/shigeya/mailsec-probe) Phase 3.0;
 co-designed with that consumer.
 
@@ -34,7 +36,7 @@ insecure | bogus | indeterminate`. `Result` additionally exposes
 `Aliases` (CNAME / DNAME hops) and `Wildcard` (synthesis evidence)
 when applicable.
 
-Out of scope for v0.3.0 (tracked in `verifier/doc.go`): RFC 5011
+Out of scope for v0.3.x (tracked in `verifier/doc.go`): RFC 5011
 trust-anchor rollover, DNSKEY / DS rrset caching.
 
 ## Layout
