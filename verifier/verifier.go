@@ -17,6 +17,7 @@ type Verifier struct {
 	resolver Resolver
 	anchors  *dnssec.RootAnchors
 	now      func() time.Time
+	cache    Cache
 }
 
 // Option configures a [Verifier] at construction time.
@@ -39,6 +40,17 @@ func WithTrustAnchors(a *dnssec.RootAnchors) Option {
 // callers normally do not need this option.
 func WithClock(now func() time.Time) Option {
 	return func(v *Verifier) { v.now = now }
+}
+
+// WithCache attaches a pluggable [Cache] consulted before every
+// resolver query. The cache is shared across Validate calls on the
+// same Verifier, which is the intended way to reuse root / TLD
+// DNSKEY rrsets across a batch run (DESIGN.md §4 SHOULD #13).
+//
+// Passing a nil Cache is equivalent to not setting the option:
+// the verifier behaves as if no cache layer existed.
+func WithCache(c Cache) Option {
+	return func(v *Verifier) { v.cache = c }
 }
 
 // NewVerifier constructs a Verifier with the supplied options. A

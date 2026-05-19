@@ -157,10 +157,11 @@ Week 3 actuals:
 
 - `verifier/` — chain validator (`Validate(ctx, qname, qtype)`),
   four-state `Verdict`, `Result` with chain / evidence,
-  `Resolver` interface for pluggable transport. Coverage 80.4%.
-  Out of scope for v0.1.0 (tracked in `verifier/doc.go`): NSEC /
-  NSEC3 negative proofs, CNAME / DNAME chasing, RFC 5011 trust-anchor
-  rollover, DNSKEY / DS cache.
+  `Resolver` interface for pluggable transport, pluggable `Cache`
+  (`WithCache`) with built-in `MemoryCache` covering DESIGN.md SHOULD
+  #13. Coverage 80.4%. Out of scope for v0.1.0 (tracked in
+  `verifier/doc.go`): NSEC / NSEC3 negative proofs, CNAME / DNAME
+  chasing, RFC 5011 trust-anchor rollover.
 - `wire/` extensions — `BuildQuery` (shared by both transports),
   `ParseMessage` with compression-pointer-aware `ParseDomainName`,
   per-type `RDataToString` decoders for A, AAAA, NS, CNAME, PTR,
