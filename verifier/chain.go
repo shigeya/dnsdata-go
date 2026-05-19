@@ -422,7 +422,18 @@ func (v *Verifier) validateRoot(ctx context.Context, result *Result) (*dnssec.Zo
 
 // loadRecords issues one resolver Query and appends every returned
 // record to z. The presentation values are also captured in result.Evidence.
+//
+// When a [Cache] is attached (via [WithCache]) the lookup goes through
+// the cache first; a hit reuses the previously fetched records and
+// skips the resolver entirely. Both hits and fresh fetches feed the
+// same [applyRecords] path so result.Evidence is populated identically
+// in either case. Resolver errors are NEVER cached.
 func (v *Verifier) loadRecords(ctx context.Context, z *dnssec.Zone, name string, qtype uint16, result *Result) (int, error) {
+	if v.cache != nil {
+		if cached, ok := v.cache.Get(name, qtype); ok {
+			return v.applyRecords(cached, z, qtype, result), nil
+		}
+	}
 	records, err := v.resolver.Query(ctx, name, qtype)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
@@ -430,6 +441,17 @@ func (v *Verifier) loadRecords(ctx context.Context, z *dnssec.Zone, name string,
 		}
 		return 0, errors.Join(ErrResolver, err)
 	}
+	if v.cache != nil {
+		v.cache.Put(name, qtype, records)
+	}
+	return v.applyRecords(records, z, qtype, result), nil
+}
+
+// applyRecords appends each record to z, updates result.Evidence for
+// the DNSSEC-bookkeeping types, and returns the count of records
+// matching qtype. Shared by the resolver-miss and cache-hit paths so
+// the two produce indistinguishable bookkeeping.
+func (v *Verifier) applyRecords(records []*zone.ResourceRecord, z *dnssec.Zone, qtype uint16, result *Result) int {
 	count := 0
 	for _, rr := range records {
 		z.AddRR(rr)
@@ -446,7 +468,7 @@ func (v *Verifier) loadRecords(ctx context.Context, z *dnssec.Zone, name string,
 			count++
 		}
 	}
-	return count, nil
+	return count
 }
 
 // matchKSKWithAnchors returns the first SEP-flagged DNSKEY in the root
@@ -605,7 +627,3 @@ func joinChainErr(err error) error {
 	return errors.Join(ErrChainTimeout, err)
 }
 
-// Ensure zone.ResourceRecord is referenced so go vet does not warn on
-// the otherwise-unused import in resolver.go on builds where Validate
-// is the only chain.go consumer.
-var _ = (*zone.ResourceRecord)(nil)

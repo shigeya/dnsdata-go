@@ -64,11 +64,18 @@
 // name, and proof source; without a valid non-existence proof the
 // answer is classified Bogus.
 //
+// Caching. A pluggable [Cache] consulted before every resolver Query
+// can be attached with [WithCache]. The verifier ships an in-memory
+// implementation ([MemoryCache]) suitable for short-lived batch runs;
+// callers needing TTL-aware eviction layer their own implementation
+// behind the same interface. Cache hits feed result.Evidence
+// identically to fresh fetches, so callers cannot tell a cached run
+// from a cold one by inspecting the [Result]. Resolver errors are
+// never cached.
+//
 // Out of scope (tracked separately):
 //
 //   - RFC 5011 trust-anchor key rollover.
-//   - Caching of DNSKEY / DS rrsets across calls (the SHOULD #13 cache
-//     hook in DESIGN.md §4 will land alongside the cache milestone).
 //
 // Per the design rules in CLAUDE.md / DESIGN.md, the verifier holds no
 // global mutable state and writes nothing to the filesystem / stdout
