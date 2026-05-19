@@ -45,7 +45,7 @@ trust-anchor rollover, DNSKEY / DS rrset caching.
 | `wire/` | DNS wire-format codec — names (with compression), builder, message parser, per-type RDATA → presentation, query builder |
 | `zone/` | zone file parser, `ResourceRecord` with pluggable RR-type handlers |
 | `dnssec/` | DNSKEY / RRSIG / DS / NSEC / NSEC3 / NSEC3PARAM handlers, root trust anchors, chain operations |
-| `resolver/doh/` | RFC 8484 DoH client with Google / Cloudflare / Quad9 failover |
+| `resolver/doh/` | RFC 8484 DoH client with Cloudflare / Google / Quad9 sequential failover |
 | `resolver/auth/` | UDP / TCP plain-DNS client with TC fallback and multi-server failover |
 | `verifier/` | DNSSEC chain-of-trust walker (`Validate(ctx, qname, qtype) → *Result`) |
 

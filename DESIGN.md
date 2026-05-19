@@ -32,7 +32,7 @@ mapping).
 | `wire/` | DNS wire-format codec, `Builder` | `dns_wire.ts` + `dns_wire_util.ts` |
 | `zone/` | Zone-file parser, RR canonicalisation | `dns_zone.ts` |
 | `dnssec/` | DNSKEY / RRSIG / DS / NSEC / NSEC3 primitives, root trust anchors | `dnssec_rr.ts`, `dnssec_zone.ts`, `root_anchors.ts` |
-| `resolver/doh/` | DoH client with failover (Google / Cloudflare / Quad9) | (new) |
+| `resolver/doh/` | DoH client with sequential failover (Cloudflare / Google / Quad9) | (new) |
 | `resolver/auth/` | Direct queries to authoritative name servers | (new) |
 | `verifier/` | DNSSEC chain-of-trust walker | (new) |
 
@@ -71,7 +71,7 @@ When this section changes, both repos' DESIGN.md must be updated together.
 5. `Result.Evidence` carries the raw DS/DNSKEY/RRSIG data (forwarded into mailsec-probe Signals)
 6. `context.Context` propagates cancel / deadline
 7. The trust anchor source is caller-supplied (`WithTrustAnchors(io.Reader)` etc.)
-8. DoH providers can be passed as a slice (failover order: Google / Cloudflare / Quad9)
+8. DoH providers can be passed as a slice (default failover order: Cloudflare / Google / Quad9 — see `resolver/doh` package doc for the rationale)
 9. There is a direct-to-authoritative-NS mode (to interoperate with mailsec-probe's `--dns-server`)
 10. `Result` can be marshaled directly with `encoding/json`
 11. `Verdict.String()` returns one of `"secure"` / `"secure-nodata"` / `"secure-nxdomain"` / `"insecure"` / `"bogus"` / `"indeterminate"` (the four pre-v0.2 strings are unchanged so consumers that only know those still work; consumers wanting fine-grained negative results route on the dash-separated new ones)

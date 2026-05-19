@@ -25,10 +25,15 @@ const (
 const MediaType = "application/dns-message"
 
 // DefaultProviders returns a fresh copy of the default provider list
-// (Google → Cloudflare → Quad9). Each call yields an independent
-// slice so the caller may freely mutate the result.
+// in the order [Client] tries them: Cloudflare → Google → Quad9. Each
+// call yields an independent slice so the caller may freely mutate the
+// result.
+//
+// The order is chosen for tail-latency stability rather than for any
+// single-region peak speed. See the package doc for the rationale and
+// for guidance on overriding it.
 func DefaultProviders() []string {
-	return []string{DefaultGoogle, DefaultCloudflare, DefaultQuad9}
+	return []string{DefaultCloudflare, DefaultGoogle, DefaultQuad9}
 }
 
 // Client is a DoH resolver with provider failover. The zero value is

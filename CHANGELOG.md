@@ -6,6 +6,26 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-05-19
+
+### Changed
+
+- `resolver/doh`: default provider order changed from
+  `Google → Cloudflare → Quad9` to **`Cloudflare → Google → Quad9`**.
+  The new order prioritises tail-latency stability (Cloudflare's
+  anycast PoP footprint is more evenly distributed worldwide,
+  particularly in Asia/Pacific), keeps Google as a reliable fallback,
+  and continues to place Quad9 last because its malicious-domain block
+  list returns NXDOMAIN for filtered names — a behaviour that should
+  not affect the common case.
+
+  Callers that explicitly configured providers via `WithProviders` are
+  unaffected. The full rationale, including provider-by-provider
+  notes, is now documented in the `resolver/doh` package doc.
+
+  No code-level API changed.
+
+
 ## [0.3.0] — 2026-05-19
 
 P9 RR handler set — sixteen legacy RR handlers and the EDNS(0) OPT
