@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/shigeya/dnsdata-go/dnssec"
+	"github.com/shigeya/dnsdata-go/resolver"
 	"github.com/shigeya/dnsdata-go/types"
 	"github.com/shigeya/dnsdata-go/verifier"
 	"github.com/shigeya/dnsdata-go/zone"
@@ -147,18 +148,18 @@ type lookupKey struct {
 	qtype uint16
 }
 
-func (r *mockResolver) Query(ctx context.Context, name string, qtype uint16) ([]*zone.ResourceRecord, error) {
+func (r *mockResolver) Query(ctx context.Context, name string, qtype uint16) (resolver.Response, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return resolver.Response{}, err
 	}
 	if r.errOnce != nil {
 		if err, ok := r.errOnce[name]; ok {
 			delete(r.errOnce, name)
-			return nil, err
+			return resolver.Response{}, err
 		}
 	}
 	name = strings.ToLower(name)
-	return r.responses[lookupKey{name: name, qtype: qtype}], nil
+	return resolver.Response{Records: r.responses[lookupKey{name: name, qtype: qtype}]}, nil
 }
 
 // buildChain wires three signed zones — root, com., example.com. —

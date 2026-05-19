@@ -7,21 +7,21 @@ import (
 	"time"
 
 	"github.com/shigeya/dnsdata-go/dnssec"
+	"github.com/shigeya/dnsdata-go/resolver"
 	"github.com/shigeya/dnsdata-go/types"
 	"github.com/shigeya/dnsdata-go/verifier"
-	"github.com/shigeya/dnsdata-go/zone"
 )
 
 // TestResolverFunc_Adapter exercises the ResolverFunc convenience
 // type so the resolver.go path stays under coverage.
 func TestResolverFunc_Adapter(t *testing.T) {
 	called := false
-	var r verifier.Resolver = verifier.ResolverFunc(func(ctx context.Context, name string, qtype uint16) ([]*zone.ResourceRecord, error) {
+	var r verifier.Resolver = verifier.ResolverFunc(func(ctx context.Context, name string, qtype uint16) (resolver.Response, error) {
 		called = true
 		if name != "x." || qtype != types.TypeA {
 			t.Errorf("ResolverFunc got name=%q qtype=%d", name, qtype)
 		}
-		return nil, nil
+		return resolver.Response{}, nil
 	})
 	if _, err := r.Query(context.Background(), "x.", types.TypeA); err != nil {
 		t.Fatalf("Query: %v", err)

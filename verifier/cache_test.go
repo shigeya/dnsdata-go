@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/shigeya/dnsdata-go/resolver"
 	"github.com/shigeya/dnsdata-go/types"
 	"github.com/shigeya/dnsdata-go/verifier"
 	"github.com/shigeya/dnsdata-go/zone"
@@ -19,7 +20,7 @@ type countingResolver struct {
 	calls atomic.Int64
 }
 
-func (r *countingResolver) Query(ctx context.Context, name string, qtype uint16) ([]*zone.ResourceRecord, error) {
+func (r *countingResolver) Query(ctx context.Context, name string, qtype uint16) (resolver.Response, error) {
 	r.calls.Add(1)
 	return r.inner.Query(ctx, name, qtype)
 }

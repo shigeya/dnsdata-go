@@ -434,17 +434,25 @@ func (v *Verifier) loadRecords(ctx context.Context, z *dnssec.Zone, name string,
 			return v.applyRecords(cached, z, qtype, result), nil
 		}
 	}
-	records, err := v.resolver.Query(ctx, name, qtype)
+	resp, err := v.resolver.Query(ctx, name, qtype)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 			return 0, joinChainErr(err)
 		}
 		return 0, errors.Join(ErrResolver, err)
 	}
-	if v.cache != nil {
-		v.cache.Put(name, qtype, records)
+	// Non-zero RCODE is surfaced as data by the resolver layer but is a
+	// hard error for chain validation (RFC 4035 §5): we cannot prove
+	// anything from a SERVFAIL or REFUSED. NXDOMAIN (3) and NODATA
+	// (records empty, RCODE 0) are handled downstream as "no records
+	// present" and need their own NSEC/NSEC3 proofs.
+	if resp.RCode != 0 && resp.RCode != 3 {
+		return 0, errors.Join(ErrResolver, fmt.Errorf("RCODE=%d", resp.RCode))
 	}
-	return v.applyRecords(records, z, qtype, result), nil
+	if v.cache != nil {
+		v.cache.Put(name, qtype, resp.Records)
+	}
+	return v.applyRecords(resp.Records, z, qtype, result), nil
 }
 
 // applyRecords appends each record to z, updates result.Evidence for
