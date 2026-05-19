@@ -60,7 +60,7 @@ UF status legend:
 | [UP-005](#up-005) | CNAME / DNAME chasing with worst-of verdict combination, alias-loop detection, MaxAliasHops cap, AliasStep records | `verifier/alias.go`, `verifier/chain.go::Validate`, `verifier/result.go::AliasStep` | [landed-upstream (#23)](https://github.com/shigeya/dnsdata-js/pull/23) |
 | [UP-006](#up-006) | Wildcard-synthesised positive answer support: digest target reconstruction (RFC 4035 §5.3.2) + next-closer non-existence proof (§5.3.4), `Result.Wildcard` evidence field | `dnssec/canon.go`, `dnssec/zone.go::CreateDigestTarget`, `verifier/wildcard.go`, `verifier/result.go::WildcardInfo` | [landed-upstream (#24)](https://github.com/shigeya/dnsdata-js/pull/24) |
 | [UP-007](#up-007) | DoH (RFC 8484) client with provider failover, EDNS(0)/DO query builder shared with `resolver/auth`, raw-bytes Query plus parsing Resolve; replaces TS's legacy Google JSON-API client | `resolver/doh/` | in-progress |
-| [UP-008](#up-008) | Pluggable `Cache` interface + built-in `MemoryCache` consulted before every `Resolver.Query`; lets a batch run reuse root/TLD DNSKEY/DS rrsets (DESIGN.md §4 SHOULD #13) | `verifier/cache.go`, `verifier/verifier.go::WithCache`, `verifier/chain.go::loadRecords` | in-progress |
+| [UP-008](#up-008) | Pluggable `Cache` interface + built-in `MemoryCache` consulted before every `Resolver.Query`; lets a batch run reuse root/TLD DNSKEY/DS rrsets (DESIGN.md §4 SHOULD #13) | `verifier/cache.go`, `verifier/verifier.go::WithCache`, `verifier/chain.go::loadRecords` | [landed-upstream (#25)](https://github.com/shigeya/dnsdata-js/pull/25) |
 
 UP status legend:
 
@@ -1095,14 +1095,14 @@ the verifier behaves as if no cache layer existed.
   contract still holds for consumers that share a cache across
   await points.
 
-**Status.** Ships in dnsdata-go HEAD (see `verifier/cache.go` and
-the `verifier` package `CHANGELOG.md` entry under `[Unreleased]`).
-Ported to dnsdata-js HEAD as
-`packages/core/src/verifier/cache.ts` with paired spec at
-`tests/verifier/verifier_cache.spec.ts`.
+**Status.** Shipped in dnsdata-go
+[#21](https://github.com/shigeya/dnsdata-go/pull/21) and ported to
+dnsdata-js [#25](https://github.com/shigeya/dnsdata-js/pull/25)
+(`packages/core/src/verifier/cache.ts` with paired spec at
+`tests/verifier/verifier_cache.spec.ts`). Both PRs landed on the
+respective `main` branches.
 
-**Tracking:** in-progress — both sides shipped locally; PRs not yet
-opened.
+**Tracking:** landed-upstream.
 
 ---
 
