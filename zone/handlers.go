@@ -25,8 +25,8 @@ import (
 // overwrites the previous registrations atomically; this matches
 // dnsdata-js's module-import semantics for `register_rr_handler`.
 //
-// Additional batches (LOC / NAPTR / SVCB / HTTPS / OPT) will be appended
-// here as each P9 batch lands.
+// Additional batches (SVCB / HTTPS / OPT) will be appended here as each
+// P9 batch lands.
 func RegisterHandlers() {
 	RegisterRRHandler(types.TypeTLSA, tlsaFactory)
 	RegisterRRHandler(types.TypeSMIMEA, smimeaFactory) // RFC 8162, shares TLSA wire format
@@ -39,4 +39,6 @@ func RegisterHandlers() {
 	RegisterRRHandler(types.TypeEUI48, eui48Factory)
 	RegisterRRHandler(types.TypeEUI64, eui64Factory) // RFC 7043 §4, shares EUI48 wire shape
 	RegisterRRHandler(types.TypeCSYNC, csyncFactory)
+	RegisterRRHandler(types.TypeLOC, locFactory)
+	RegisterRRHandler(types.TypeNAPTR, naptrFactory)
 }
