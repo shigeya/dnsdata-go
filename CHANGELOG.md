@@ -6,6 +6,8 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-05-19
+
 ### Added
 
 - `verifier`: pluggable `Cache` interface and built-in `MemoryCache`
@@ -14,6 +16,8 @@ this project adheres to [Semantic Versioning](https://semver.org/).
   (including NODATA) back into it; resolver errors are never cached.
   Sharing one `Cache` across `Validate` calls lets a batch run reuse
   root and TLD DNSKEY/DS rrsets, satisfying DESIGN.md §4 SHOULD #13.
+  Ported to dnsdata-js as
+  [#25](https://github.com/shigeya/dnsdata-js/pull/25) (UP-008).
 
 ## [0.3.1] — 2026-05-19
 
