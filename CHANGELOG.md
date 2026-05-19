@@ -6,6 +6,13 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-05-20
+
+Coordinated release with dnsdata-js v0.6.0 and mailsec-probe v0.6.0.
+Skips v0.5.0 in this repo (was used for the `v0.5.0-rc.1` pre-release
+during UP-009 development; the rc tag remains in place for archaeology
+but is not a published stable line — pin v0.6.0 instead).
+
 ### Changed (BREAKING)
 
 - New `resolver` package introduces `type Response { Records, AD, RCode }`,
