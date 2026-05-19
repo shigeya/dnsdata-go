@@ -61,6 +61,7 @@ UF status legend:
 | [UP-006](#up-006) | Wildcard-synthesised positive answer support: digest target reconstruction (RFC 4035 §5.3.2) + next-closer non-existence proof (§5.3.4), `Result.Wildcard` evidence field | `dnssec/canon.go`, `dnssec/zone.go::CreateDigestTarget`, `verifier/wildcard.go`, `verifier/result.go::WildcardInfo` | [landed-upstream (#24)](https://github.com/shigeya/dnsdata-js/pull/24) |
 | [UP-007](#up-007) | DoH (RFC 8484) client with provider failover, EDNS(0)/DO query builder shared with `resolver/auth`, raw-bytes Query plus parsing Resolve; replaces TS's legacy Google JSON-API client | `resolver/doh/` | in-progress |
 | [UP-008](#up-008) | Pluggable `Cache` interface + built-in `MemoryCache` consulted before every `Resolver.Query`; lets a batch run reuse root/TLD DNSKEY/DS rrsets (DESIGN.md §4 SHOULD #13) | `verifier/cache.go`, `verifier/verifier.go::WithCache`, `verifier/chain.go::loadRecords` | [landed-upstream (#25)](https://github.com/shigeya/dnsdata-js/pull/25) |
+| [UP-009](#up-009) | Resolver response shape: `Resolve()` now returns `(resolver.Response, error)` where `Response = {Records, AD, RCode}`; non-zero RCODE surfaces as data rather than error so callers can distinguish NXDOMAIN/NODATA/SERVFAIL and consumers (mailsec-probe) can observe AD without re-parsing | `resolver/resolver.go`, `resolver/{doh,auth}/resolve.go`, `verifier/resolver.go`, `verifier/chain.go::loadRecords` | proposed |
 
 UP status legend:
 
@@ -1103,6 +1104,56 @@ dnsdata-js [#25](https://github.com/shigeya/dnsdata-js/pull/25)
 respective `main` branches.
 
 **Tracking:** landed-upstream.
+
+---
+
+## UP-009
+
+### Resolver response shape with AD and RCode
+
+**Go source:** new package `resolver/` with `type Response { Records, AD, RCode }`. Both `resolver/doh.Client.Resolve` and `resolver/auth.Client.Resolve` now return `(resolver.Response, error)`. `verifier.Resolver.Query` / `verifier.ResolverFunc` signatures updated in lockstep. RCODE classification moves from the resolver layer to `verifier/chain.go::loadRecords`.
+
+**Why it matters for TS.** The TS resolver clients return only the records slice today; AD and RCode are dropped on the floor. The Go consumer (mailsec-probe `internal/probe/dnsclient`) needs both:
+
+- **AD bit** is the entire signal for `--dnssec-mode ad-only`, the default DNSSEC observation path in mailsec-probe. Without it the resolver layer cannot supply DNSSEC information without re-parsing the wire message.
+- **RCode** distinguishes NXDOMAIN, NODATA, SERVFAIL, REFUSED in the JSON output and lets the probe layer (not the transport) decide how to treat each.
+
+Returning non-zero RCODE as an error also conflates "I couldn't reach a server" with "the server told me NXDOMAIN", which forced callers to parse error strings to recover RCode. The new shape keeps transport errors as `error` and treats every parsed DNS response — including SERVFAIL — as data.
+
+**API surface (Go).**
+
+```go
+// resolver/resolver.go
+package resolver
+
+type Response struct {
+    Records []*zone.ResourceRecord
+    AD      bool
+    RCode   uint8
+}
+
+// resolver/doh and resolver/auth
+func (c *Client) Resolve(ctx, name, qtype) (resolver.Response, error)
+
+// verifier/resolver.go
+type Resolver interface {
+    Query(ctx, name, qtype) (resolver.Response, error)
+}
+type ResolverFunc func(ctx, name, qtype) (resolver.Response, error)
+```
+
+**RCODE policy.** The resolver layer never errors on a non-zero RCODE. `verifier/chain.go::loadRecords` treats `RCode == 0` and `RCode == 3` (NXDOMAIN) as "no records present" — both go through the existing NODATA / NXDOMAIN paths with NSEC/NSEC3 proofs — and joins `ErrResolver` for any other non-zero value (SERVFAIL, REFUSED, etc.) where chain validation cannot proceed.
+
+**TS migration notes.**
+
+- TS already has typed wire parsing, so exposing `AD` / `RCode` on the resolver response object is a small additive change.
+- TS today throws on non-zero RCODE in the DoH client; mirror the Go behaviour by returning `{ records, ad, rcode }` and letting the verifier classify.
+- The verifier-side RCODE policy (only `0` and `3` are non-fatal) should match Go exactly to keep the four-state Verdict contract identical across siblings.
+- The `Cache` interface continues to cache only the records slice, not the full Response. AD is per-query and verifier doesn't need to reuse it; RCode is implicit (cache only stores hits).
+
+**Status.** Shipped in dnsdata-go (commit pending on `main`). TS port-back not started; this is a breaking change at the resolver and verifier interface boundary so it should land in dnsdata-js as a coordinated v0.x bump.
+
+**Tracking:** proposed.
 
 ---
 

@@ -6,6 +6,27 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed (BREAKING)
+
+- New `resolver` package introduces `type Response { Records, AD, RCode }`,
+  and both `resolver/doh.Client.Resolve` and `resolver/auth.Client.Resolve`
+  now return `(resolver.Response, error)` instead of
+  `([]*zone.ResourceRecord, error)`. The AD bit and RCODE from the response
+  header are surfaced verbatim so consumers (notably mailsec-probe's
+  `dnsclient`) no longer need to re-parse the wire message to recover them.
+- Non-zero RCODE is no longer reported as `ErrResolverResponse`. The
+  resolver layer returns the parsed response as data; only transport-level
+  failures (network, parse) come back as errors. Callers that need
+  "any non-zero RCODE is fatal" should inspect `resp.RCode` themselves.
+- `verifier.Resolver.Query` and `verifier.ResolverFunc` signatures updated
+  in lockstep to `(ctx, name, qtype) (resolver.Response, error)`. The
+  RCODE classification policy moves into `verifier/chain.go::loadRecords`:
+  RCODE 0 and 3 (NXDOMAIN) are treated as "no records present" so the
+  existing NODATA / NXDOMAIN proof paths handle them; any other non-zero
+  RCODE joins `ErrResolver`.
+
+Tracked as UP-009.
+
 ## [0.4.0] — 2026-05-19
 
 ### Added

@@ -261,10 +261,11 @@ func TestClient_Resolve_HappyPath(t *testing.T) {
 		return buildResponseTo(t, query, "example.com.", types.TypeDNSKEY, 3600, rrdata, false)
 	})
 	c := auth.NewClient(auth.WithServers(addr), auth.WithTimeout(500*time.Millisecond))
-	records, err := c.Resolve(context.Background(), "example.com.", types.TypeDNSKEY)
+	resp, err := c.Resolve(context.Background(), "example.com.", types.TypeDNSKEY)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
+	records := resp.Records
 	if len(records) != 1 {
 		t.Fatalf("records = %d, want 1", len(records))
 	}
@@ -315,10 +316,11 @@ func TestClient_Resolve_IncludesAuthoritySection(t *testing.T) {
 		)
 	})
 	c := auth.NewClient(auth.WithServers(addr), auth.WithTimeout(500*time.Millisecond))
-	records, err := c.Resolve(context.Background(), "www.example.com.", types.TypeA)
+	resp, err := c.Resolve(context.Background(), "www.example.com.", types.TypeA)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
+	records := resp.Records
 	if len(records) != 2 {
 		t.Fatalf("records = %d, want 2 (answer + authority)", len(records))
 	}
@@ -348,9 +350,12 @@ func TestClient_Resolve_RCODE(t *testing.T) {
 		return b.Clone()
 	})
 	c := auth.NewClient(auth.WithServers(addr), auth.WithTimeout(500*time.Millisecond))
-	_, err := c.Resolve(context.Background(), "missing.example.", types.TypeA)
-	if !errors.Is(err, auth.ErrResolverResponse) {
-		t.Errorf("err = %v, want ErrResolverResponse", err)
+	resp, err := c.Resolve(context.Background(), "missing.example.", types.TypeA)
+	if err != nil {
+		t.Fatalf("Resolve: unexpected error %v (non-zero RCODE is now data, not error)", err)
+	}
+	if resp.RCode != 3 {
+		t.Errorf("RCode = %d, want 3 (NXDOMAIN)", resp.RCode)
 	}
 }
 
