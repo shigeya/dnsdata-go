@@ -98,8 +98,11 @@ func TestWireBody_MalformedMXReturnsError(t *testing.T) {
 }
 
 func TestWireBody_UnsupportedTypeIsNoOp(t *testing.T) {
-	// HINFO (13) has no built-in encoder and no registered handler.
-	rr := newRR(t, "example.com.", 60, "IN", "HINFO", "Linux x86_64")
+	// Use an IANA-unassigned numeric type that no Batch will ever
+	// register; HINFO (13) is no longer suitable now that the P9
+	// port covers it.
+	const unassignedRRType uint16 = 65531
+	rr := newRR(t, "example.com.", 60, "IN", unassignedRRType, "opaque payload")
 	var b wire.Builder
 	if err := rr.WireBody(&b); err != nil {
 		t.Fatalf("WireBody: %v", err)
