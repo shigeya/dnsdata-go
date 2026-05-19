@@ -6,15 +6,98 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-05-19
+
+P9 RR handler set — sixteen legacy RR handlers and the EDNS(0) OPT
+pseudo-RR codec ported from dnsdata-js, all reachable through the new
+`zone.RegisterHandlers()` opt-in entrypoint (no `init()` side effects,
+DESIGN.md §4.21). Consumers that want every bundled handler call
+
+```go
+zone.RegisterHandlers()
+dnssec.RegisterHandlers()
+```
+
+which is equivalent to dnsdata-js's `registerAllHandlers()`.
+
 ### Added
 
-- `zone`: P9 Batch 1 — `TLSA` (RFC 6698), `SMIMEA` (RFC 8162), and
-  `SSHFP` (RFC 4255) RR handlers ported from dnsdata-js. TLSA and
-  SMIMEA share one struct since their wire and presentation formats
-  are byte-for-byte identical. Opt-in via the new
-  `zone.RegisterHandlers()` entrypoint, which parallels
-  `dnssec.RegisterHandlers()` and keeps the package free of `init()`
-  side effects (DESIGN.md §4.21). Closes [#6](https://github.com/shigeya/dnsdata-go/issues/6); part of [#5](https://github.com/shigeya/dnsdata-go/issues/5).
+- `zone`: P9 Batch 1 — `TLSA` (RFC 6698, type 52), `SMIMEA`
+  (RFC 8162, type 53), and `SSHFP` (RFC 4255, type 44) RR handlers.
+  TLSA and SMIMEA share one struct since their wire and presentation
+  formats are byte-for-byte identical; `smimeaFactory` forwards to
+  `tlsaFactory`. Closes
+  [#6](https://github.com/shigeya/dnsdata-go/issues/6); part of
+  [#5](https://github.com/shigeya/dnsdata-go/issues/5).
+- `zone`: P9 Batch 2 — `OPENPGPKEY` (RFC 7929, type 61), `CERT`
+  (RFC 4398, type 37), and `URI` (RFC 7553, type 256) RR handlers.
+  CERT accepts both numeric and mnemonic certificate-type codes
+  (PKIX / SPKI / PGP / IPKIX / ISPKI / IPGP / ACPKIX / IACPKIX /
+  URI / OID). Closes
+  [#7](https://github.com/shigeya/dnsdata-go/issues/7).
+- `zone`: P9 Batch 3 — `HINFO` (RFC 1035 §3.3.2, type 13) and
+  `RP` (RFC 1183 §2.2, type 17) RR handlers. New
+  `parseCharacterStrings` helper handles RFC 1035 §5.1 lexing and
+  is reusable by future handlers. Closes
+  [#8](https://github.com/shigeya/dnsdata-go/issues/8).
+- `zone`: P9 Batch 4 — `EUI48` (RFC 7043 §3, type 108) and `EUI64`
+  (RFC 7043 §4, type 109) RR handlers. One `EUI` struct with a
+  `ByteLen` field handles both. Closes
+  [#9](https://github.com/shigeya/dnsdata-go/issues/9).
+- `zone`: P9 Batch 5 — `CSYNC` (RFC 7477, type 62) RR handler.
+  Closes [#10](https://github.com/shigeya/dnsdata-go/issues/10).
+- `zone`: P9 Batch 6 — `LOC` (RFC 1876, type 29) and `NAPTR`
+  (RFC 3403, type 35) RR handlers. LOC parses
+  degrees-only, degrees-minutes, and full degrees-minutes-seconds(.frac)
+  forms with N/S/E/W directions; SIZE / HORIZ_PRE / VERT_PRE encode
+  as mantissa<<4 | exponent centimetres. Closes
+  [#11](https://github.com/shigeya/dnsdata-go/issues/11).
+- `zone`: P9 Batch 7 — `SVCB` (RFC 9460, type 64) and `HTTPS`
+  (RFC 9460 §9.1, type 65) RR handlers. SVCB and HTTPS share the
+  identical wire and presentation format byte-for-byte; one `SVCB`
+  struct backs both. Initial SvcParamKey registry covers `mandatory`,
+  `alpn`, `no-default-alpn`, `port`, `ipv4hint`, `ech`, `ipv6hint`,
+  plus the open-ended `keyNNNNN` form for unassigned codepoints.
+  Presentation order does not matter — params are sorted by key
+  before encoding so wire output is always §2.2-conformant. Closes
+  [#12](https://github.com/shigeya/dnsdata-go/issues/12).
+- `wire`: P9 Batch 8 — `EDNS` / OPT pseudo-RR codec (RFC 6891). OPT
+  lives in `wire/` rather than `zone/` because it is a meta-RR that
+  appears in DNS message additional sections, never in zone files,
+  and `wire.BuildQuery` already emits an OPT pseudo-RR inline.
+  `wire.EDNS` exposes `Encode(b *Builder)`, `DecodeOPT(data []byte)`,
+  and `FindOption(code)`, plus well-known option-code constants
+  (NSID / ClientSubnet / Cookie / Padding / Chain). Defaults match
+  dnsdata-js: `UDPPayloadSize=0` encodes as 4096, `DOBit=false`.
+  Byte-for-byte compatible with `wire.BuildQuery`'s existing OPT
+  output (verified by `TestEDNS_BuildQueryParity`). Closes
+  [#13](https://github.com/shigeya/dnsdata-go/issues/13).
+- `zone.RegisterHandlers()` — new opt-in entrypoint that registers
+  every P9 RR handler. Parallels `dnssec.RegisterHandlers()`.
+
+### Changed
+
+- `wire`: `EncodeTypeBitmap` / `DecodeTypeBitmap` moved from
+  `dnssec/` to `wire/` (their natural home — they encode and decode
+  a wire-format bitmap of RR-type numbers). `dnssec.EncodeTypeBitmap`
+  / `DecodeTypeBitmap` remain as thin delegating wrappers so existing
+  callers and tests do not break; new code should reach for
+  `wire.EncodeTypeBitmap` directly.
+
+### Documentation
+
+- README.md slimmed down; sibling-implementation model (cross-repo
+  module mapping, drift policy, feature origin tagging) extracted to
+  [`docs/SIBLING.md`](docs/SIBLING.md), which links to the workspace
+  `DESIGN.md` as the source of truth.
+- Position `dnsdata-go` and `dnsdata-js` as equal sibling
+  implementations (Model C). README, DESIGN, and UPSTREAM_FEEDBACK
+  reframed away from a fixed TS → Go direction; UF-NNN / UP-NNN
+  remain as the Go-side catalogue of the bidirectional feedback
+  channel. ([#3](https://github.com/shigeya/dnsdata-go/pull/3))
+- UPSTREAM_FEEDBACK.md: UP-001 … UP-006 marked landed-upstream
+  (dnsdata-js PRs #17, #19, #21, #22, #23, #24). Added UP-007
+  recording the DoH port-back to dnsdata-js.
 
 ## [0.2.2] — 2026-05-18
 
@@ -218,6 +301,7 @@ These are tracked in `verifier/doc.go` and the relevant UP entries:
 - Cross-call DNSKEY / DS cache (SHOULD #13 in DESIGN.md).
 - Helper converters to `miekg/dns.RR` (MAY #17).
 
+[0.3.0]: https://github.com/shigeya/dnsdata-go/releases/tag/v0.3.0
 [0.2.2]: https://github.com/shigeya/dnsdata-go/releases/tag/v0.2.2
 [0.2.1]: https://github.com/shigeya/dnsdata-go/releases/tag/v0.2.1
 [0.2.0]: https://github.com/shigeya/dnsdata-go/releases/tag/v0.2.0
