@@ -25,8 +25,8 @@ import (
 // overwrites the previous registrations atomically; this matches
 // dnsdata-js's module-import semantics for `register_rr_handler`.
 //
-// Additional batches (SVCB / HTTPS / OPT) will be appended here as each
-// P9 batch lands.
+// The final batch (OPT, EDNS(0)) is intentionally standalone and not
+// registered here — OPT records have no registry presence in zone files.
 func RegisterHandlers() {
 	RegisterRRHandler(types.TypeTLSA, tlsaFactory)
 	RegisterRRHandler(types.TypeSMIMEA, smimeaFactory) // RFC 8162, shares TLSA wire format
@@ -41,4 +41,6 @@ func RegisterHandlers() {
 	RegisterRRHandler(types.TypeCSYNC, csyncFactory)
 	RegisterRRHandler(types.TypeLOC, locFactory)
 	RegisterRRHandler(types.TypeNAPTR, naptrFactory)
+	RegisterRRHandler(types.TypeSVCB, svcbFactory)
+	RegisterRRHandler(types.TypeHTTPS, httpsFactory) // RFC 9460 §9.1, shares SVCB wire format
 }
