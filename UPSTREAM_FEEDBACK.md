@@ -60,6 +60,7 @@ UF status legend:
 | [UP-005](#up-005) | CNAME / DNAME chasing with worst-of verdict combination, alias-loop detection, MaxAliasHops cap, AliasStep records | `verifier/alias.go`, `verifier/chain.go::Validate`, `verifier/result.go::AliasStep` | [landed-upstream (#23)](https://github.com/shigeya/dnsdata-js/pull/23) |
 | [UP-006](#up-006) | Wildcard-synthesised positive answer support: digest target reconstruction (RFC 4035 §5.3.2) + next-closer non-existence proof (§5.3.4), `Result.Wildcard` evidence field | `dnssec/canon.go`, `dnssec/zone.go::CreateDigestTarget`, `verifier/wildcard.go`, `verifier/result.go::WildcardInfo` | [landed-upstream (#24)](https://github.com/shigeya/dnsdata-js/pull/24) |
 | [UP-007](#up-007) | DoH (RFC 8484) client with provider failover, EDNS(0)/DO query builder shared with `resolver/auth`, raw-bytes Query plus parsing Resolve; replaces TS's legacy Google JSON-API client | `resolver/doh/` | in-progress |
+| [UP-008](#up-008) | Pluggable `Cache` interface + built-in `MemoryCache` consulted before every `Resolver.Query`; lets a batch run reuse root/TLD DNSKEY/DS rrsets (DESIGN.md §4 SHOULD #13) | `verifier/cache.go`, `verifier/verifier.go::WithCache`, `verifier/chain.go::loadRecords` | in-progress |
 
 UP status legend:
 
@@ -1004,6 +1005,104 @@ with paired spec files under `tests/lib/resolver/doh/`.
 
 **Tracking:** in-progress — port landed locally in dnsdata-js; PR
 not yet opened (P1 of the in-flight dnsdata-js refactor).
+
+---
+
+## UP-008
+
+### Pluggable Cache layer for the verifier (DESIGN.md SHOULD #13)
+
+**Go source:** `verifier/cache.go`, `verifier/verifier.go::WithCache`,
+`verifier/chain.go::loadRecords` (cache lookup + put around the
+`Resolver.Query` call, plus `applyRecords` helper shared with the
+fresh-fetch path). Tests in `verifier/cache_test.go`.
+
+**Why it matters for TS.** Validating many domains in a batch (the
+primary mailsec-probe use case) re-walks the same root and TLD
+DNSKEY/DS rrsets per call. The `Validate` outer loop already
+restarts from the root on every alias hop. Without a cache the
+verifier issues O(zones × validate-calls) resolver requests against
+data that is essentially immutable for the duration of a batch.
+A pluggable cache lets a caller share one in-memory store across
+calls and reduce the cost to the leaf path.
+
+**Public API surface.**
+
+```go
+type Cache interface {
+    Get(name string, qtype uint16) (records []*zone.ResourceRecord, ok bool)
+    Put(name string, qtype uint16, records []*zone.ResourceRecord)
+}
+
+type MemoryCache struct{ /* opaque */ }
+
+func NewMemoryCache() *MemoryCache
+func (c *MemoryCache) Len() int
+
+func WithCache(c Cache) Option
+```
+
+`verifier.WithCache(nil)` is equivalent to not passing the option —
+the verifier behaves as if no cache layer existed.
+
+**Design decisions worth carrying back to TS.**
+
+1. **(name, qtype) granularity.** The smallest meaningful unit is one
+   rrset, and the verifier already issues one resolver query per
+   rrset. Per-record caching would require re-sorting / re-grouping
+   on every read; per-zone caching would force callers to track zone
+   cuts. (name, qtype) lines up 1:1 with `Resolver.Query`'s shape.
+2. **NODATA is a valid cache entry.** A successful resolver response
+   with zero records is materially different from "we never asked".
+   `Get` MUST signal a hit (`ok=true` in Go, non-`undefined` in TS)
+   even when the records list is empty. Tests assert this directly.
+3. **Errors are never cached.** Only successful resolver responses
+   feed `Put`. A failure leaves the cache untouched so the next
+   call has a chance to retry the underlying transport.
+4. **No TTL by default.** The DESIGN clause specifically calls out
+   "across a batch run". `MemoryCache` is unbounded and entries
+   never expire; callers who need TTL-aware behaviour layer their
+   own implementation behind `Cache`. The interface intentionally
+   does not surface TTL — implementations inspect
+   `ResourceRecord.TTL` themselves if they want it.
+5. **Concurrency.** The chain walker itself is single-goroutine per
+   `Validate` call, but real callers fan out across goroutines.
+   `MemoryCache` uses `sync.RWMutex`; the interface contract says
+   implementations MUST be safe for concurrent Get/Put.
+6. **Shared `applyRecords` helper.** Cache hits and fresh fetches
+   both flow through the same record-application path so
+   `result.Evidence` is populated identically. A caller cannot tell
+   a cached run from a cold one by inspecting the Result. This is
+   what lets the cache be added without changing any existing test
+   expectations.
+7. **`WithCache(nil)` is a no-op.** Defensive: callers that build
+   options programmatically can pass an optional cache without
+   special-casing the nil branch on their end.
+
+**TS migration notes.**
+
+- The Go `(records, ok)` tuple maps to TS `records | undefined`:
+  `undefined` means miss, an empty array means NODATA hit. This is
+  the most idiomatic shape and avoids a tuple wrapper.
+- `MemoryCache` uses a `Map<string, ResourceRecord[]>` keyed by
+  `${name} ${qtype}` (a literal space is illegal in a normalised
+  DNS name per RFC 1035 §2.3.1, so the separator is unambiguous).
+  No external dependency.
+- `VerifierOptions.cache?: Cache` is the natural injection point;
+  nullish is treated as "no cache".
+- TS does not need a separate concurrency story because the JS
+  event loop serialises operations on a Map; the same interface
+  contract still holds for consumers that share a cache across
+  await points.
+
+**Status.** Ships in dnsdata-go HEAD (see `verifier/cache.go` and
+the `verifier` package `CHANGELOG.md` entry under `[Unreleased]`).
+Ported to dnsdata-js HEAD as
+`packages/core/src/verifier/cache.ts` with paired spec at
+`tests/verifier/verifier_cache.spec.ts`.
+
+**Tracking:** in-progress — both sides shipped locally; PRs not yet
+opened.
 
 ---
 
