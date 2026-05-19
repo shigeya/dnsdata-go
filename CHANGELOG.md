@@ -4,6 +4,18 @@ All notable changes to dnsdata-go are recorded here. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- `zone`: P9 Batch 1 — `TLSA` (RFC 6698), `SMIMEA` (RFC 8162), and
+  `SSHFP` (RFC 4255) RR handlers ported from dnsdata-js. TLSA and
+  SMIMEA share one struct since their wire and presentation formats
+  are byte-for-byte identical. Opt-in via the new
+  `zone.RegisterHandlers()` entrypoint, which parallels
+  `dnssec.RegisterHandlers()` and keeps the package free of `init()`
+  side effects (DESIGN.md §4.21). Closes [#6](https://github.com/shigeya/dnsdata-go/issues/6); part of [#5](https://github.com/shigeya/dnsdata-go/issues/5).
+
 ## [0.2.2] — 2026-05-18
 
 ### Fixed
