@@ -6,6 +6,16 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-09-24
+
+Zone signing and offline validation: unknown RR types as first class,
+a strict zone reader, canonical output, a zone signer, an in-memory
+authority, and the validated answer on `Result`. No API is removed or
+changed in shape, but two validation fixes change verdicts: RRSIGs
+outside their validity window are now Bogus (UF-006), and RRsets whose
+members differ in length now verify against other signers (UF-005).
+dnsdata-js port-back of UP-010..015 and UF-005/006 is pending.
+
 ### Added
 
 - RFC 3597 unknown types (UP-010). `StringToRRType` / `StringToRRClass`
