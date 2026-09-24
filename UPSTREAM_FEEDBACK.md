@@ -42,8 +42,8 @@ DESIGN.md change.
 | [UF-002](#uf-002) | No label / name length validation | `dns_wire.ts:1-32` | robustness | [fixed-upstream (#14)](https://github.com/shigeya/dnsdata-js/pull/14) |
 | [UF-003](#uf-003) | Unknown enum inputs throw bare `RangeError`; no typed classification | `dns_type_table.ts:18,31,59,86,…` | api-shape | [fixed-upstream (#16)](https://github.com/shigeya/dnsdata-js/pull/16) |
 | [UF-004](#uf-004) | `ResourceRecord.get_wire_body` silently emits nothing when RDATA parse fails | `dns_zone.ts:175-295` | robustness | [fixed-upstream (#15)](https://github.com/shigeya/dnsdata-js/pull/15) |
-| [UF-005](#uf-005) | RRSIG digest target sorts RRset members with their RDLENGTH prefix and keeps duplicates; RFC 4034 §6.3 orders by RDATA alone and removes duplicates | `dnssec/dnssec_zone.ts:98-105` | bug | pending |
-| [UF-006](#uf-006) | RRSIG inception / expiration never checked; an expired signature validates | `dnssec/dnssec_zone.ts`, `verifier/` | bug | pending |
+| [UF-005](#uf-005) | RRSIG digest target sorts RRset members with their RDLENGTH prefix and keeps duplicates; RFC 4034 §6.3 orders by RDATA alone and removes duplicates | `dnssec/dnssec_zone.ts:98-105` | bug | fixed-upstream (dnsdata-js `4dffc7a`) |
+| [UF-006](#uf-006) | RRSIG inception / expiration never checked; an expired signature validates | `dnssec/dnssec_zone.ts`, `verifier/` | bug | fixed-upstream (dnsdata-js `4dffc7a`) |
 
 UF status legend:
 
@@ -63,13 +63,13 @@ UF status legend:
 | [UP-006](#up-006) | Wildcard-synthesised positive answer support: digest target reconstruction (RFC 4035 §5.3.2) + next-closer non-existence proof (§5.3.4), `Result.Wildcard` evidence field | `dnssec/canon.go`, `dnssec/zone.go::CreateDigestTarget`, `verifier/wildcard.go`, `verifier/result.go::WildcardInfo` | [landed-upstream (#24)](https://github.com/shigeya/dnsdata-js/pull/24) |
 | [UP-007](#up-007) | DoH (RFC 8484) client with provider failover, EDNS(0)/DO query builder shared with `resolver/auth`, raw-bytes Query plus parsing Resolve; replaces TS's legacy Google JSON-API client | `resolver/doh/` | in-progress |
 | [UP-008](#up-008) | Pluggable `Cache` interface + built-in `MemoryCache` consulted before every `Resolver.Query`; lets a batch run reuse root/TLD DNSKEY/DS rrsets (DESIGN.md §4 SHOULD #13) | `verifier/cache.go`, `verifier/verifier.go::WithCache`, `verifier/chain.go::loadRecords` | [landed-upstream (#25)](https://github.com/shigeya/dnsdata-js/pull/25) |
-| [UP-009](#up-009) | Resolver response shape: `Resolve()` now returns `(resolver.Response, error)` where `Response = {Records, AD, RCode}`; non-zero RCODE surfaces as data rather than error so callers can distinguish NXDOMAIN/NODATA/SERVFAIL and consumers (mailsec-probe) can observe AD without re-parsing | `resolver/resolver.go`, `resolver/{doh,auth}/resolve.go`, `verifier/resolver.go`, `verifier/chain.go::loadRecords` | proposed |
-| [UP-010](#up-010) | RFC 3597 unknown types as first class: `TYPE<n>` / `CLASS<n>` mnemonics everywhere a name is parsed or printed, and `\# <len> <hex>` generic RDATA accepted for any type and written back verbatim; shared round-trip vectors in `testdata/rdata_roundtrip.json` | `types/rfc3597.go`, `zone/generic.go`, `zone/rr.go::{Handler,WireBody}`, `dnssec/zone.go::SignRR` | proposed |
-| [UP-011](#up-011) | Strict master-file reader: `Zone.ReadStringStrict` rejects what `ReadString` silently skips, with a line-numbered `*ParseError`, and leaves the zone untouched on error | `zone/strict.go` | proposed |
-| [UP-012](#up-012) | Deterministic output: `Zone.RecordsCanonical` / `PrintCanonical` in RFC 4034 §6 canonical order with duplicates removed; `zone.CompareCanonicalNames` (dnssec's now delegates to it) | `zone/canonical.go`, `dnssec/canon.go` | proposed |
-| [UP-013](#up-013) | Zone signer: key generation and loading (PKCS#8 PEM, BIND `.private`), DS / trust-anchor derivation, NSEC chain, `SignZone` with KSK/ZSK split or CSK and caller-supplied validity window | `dnssec/signer/` | proposed |
-| [UP-014](#up-014) | In-memory authority (`verifier.Resolver`) for signed zones with DS from the parent side, referrals, NSEC proofs, CNAME / DNAME / wildcard, fault injection; private-root validation fixed by tests, an example and shared vectors in `testdata/signed/` | `resolver/memory/` | proposed |
-| [UP-015](#up-015) | `Result.Answer`: the validated terminal RRset (presentation value, RDATA octets, TTL) and the RRSIGs that verified it with their validity windows; set only for Secure | `verifier/result.go`, `verifier/answer.go`, `verifier/chain.go::resolveLeaf` | proposed |
+| [UP-009](#up-009) | Resolver response shape: `Resolve()` now returns `(resolver.Response, error)` where `Response = {Records, AD, RCode}`; non-zero RCODE surfaces as data rather than error so callers can distinguish NXDOMAIN/NODATA/SERVFAIL and consumers (mailsec-probe) can observe AD without re-parsing | `resolver/resolver.go`, `resolver/{doh,auth}/resolve.go`, `verifier/resolver.go`, `verifier/chain.go::loadRecords` | [landed-upstream (#28)](https://github.com/shigeya/dnsdata-js/pull/28) |
+| [UP-010](#up-010) | RFC 3597 unknown types as first class: `TYPE<n>` / `CLASS<n>` mnemonics everywhere a name is parsed or printed, and `\# <len> <hex>` generic RDATA accepted for any type and written back verbatim; shared round-trip vectors in `testdata/rdata_roundtrip.json` | `types/rfc3597.go`, `zone/generic.go`, `zone/rr.go::{Handler,WireBody}`, `dnssec/zone.go::SignRR` | landed-upstream (dnsdata-js `a5ea02d`) |
+| [UP-011](#up-011) | Strict master-file reader: `Zone.ReadStringStrict` rejects what `ReadString` silently skips, with a line-numbered `*ParseError`, and leaves the zone untouched on error | `zone/strict.go` | landed-upstream (dnsdata-js `5bcfd8c`) |
+| [UP-012](#up-012) | Deterministic output: `Zone.RecordsCanonical` / `PrintCanonical` in RFC 4034 §6 canonical order with duplicates removed; `zone.CompareCanonicalNames` (dnssec's now delegates to it) | `zone/canonical.go`, `dnssec/canon.go` | landed-upstream (dnsdata-js `5bcfd8c`) |
+| [UP-013](#up-013) | Zone signer: key generation and loading (PKCS#8 PEM, BIND `.private`), DS / trust-anchor derivation, NSEC chain, `SignZone` with KSK/ZSK split or CSK and caller-supplied validity window | `dnssec/signer/` | landed-upstream (dnsdata-js `4faff87`) |
+| [UP-014](#up-014) | In-memory authority (`verifier.Resolver`) for signed zones with DS from the parent side, referrals, NSEC proofs, CNAME / DNAME / wildcard, fault injection; private-root validation fixed by tests, an example and shared vectors in `testdata/signed/` | `resolver/memory/` | landed-upstream (dnsdata-js `14638e0`) |
+| [UP-015](#up-015) | `Result.Answer`: the validated terminal RRset (presentation value, RDATA octets, TTL) and the RRSIGs that verified it with their validity windows; set only for Secure | `verifier/result.go`, `verifier/answer.go`, `verifier/chain.go::resolveLeaf` | landed-upstream (dnsdata-js `aba7822`) |
 
 UP status legend:
 
@@ -254,7 +254,7 @@ The same section requires duplicate RRs to be removed. Without that, an RRset th
 
 **Recommended TS fix.** Compare `a.subarray(2)` with `b.subarray(2)` and drop adjacent equal bodies after sorting.
 
-**Tracking:** pending.
+**Tracking:** fixed-upstream in dnsdata-js `4dffc7a` (`create_digest_target`; test `tests/dnssec/canonical_digest.spec.ts`).
 
 ---
 
@@ -270,7 +270,7 @@ The same section requires duplicate RRs to be removed. Without that, an RRset th
 
 **Recommended TS fix.** Add an optional clock to `DNSSECZone` and pass the verifier's `now` into every zone the chain walker creates.
 
-**Tracking:** pending.
+**Tracking:** fixed-upstream in dnsdata-js `4dffc7a` (`DNSSecZone.set_clock`; the verifier's `now` option now takes effect).
 
 ---
 
@@ -1193,9 +1193,11 @@ type ResolverFunc func(ctx, name, qtype) (resolver.Response, error)
 - The verifier-side RCODE policy (only `0` and `3` are non-fatal) should match Go exactly to keep the four-state Verdict contract identical across siblings.
 - The `Cache` interface continues to cache only the records slice, not the full Response. AD is per-query and verifier doesn't need to reuse it; RCode is implicit (cache only stores hits).
 
-**Status.** Shipped in dnsdata-go (commit pending on `main`). TS port-back not started; this is a breaking change at the resolver and verifier interface boundary so it should land in dnsdata-js as a coordinated v0.x bump.
+**Status.** Shipped in dnsdata-go and ported to dnsdata-js
+[#28](https://github.com/shigeya/dnsdata-js/pull/28)
+(`packages/core/src/resolver/response.ts`), released in v0.6.0.
 
-**Tracking:** proposed.
+**Tracking:** landed-upstream.
 
 ---
 
@@ -1243,7 +1245,7 @@ func (rr *ResourceRecord) TXTStrings() ([]string, error)
 - `ResourceRecord.get_wire_body` should test for `\#` before dispatching to a handler or the built-in encoders.
 - Load the shared JSON vectors from the spec rather than transcribing them.
 
-**Tracking:** proposed.
+**Tracking:** landed-upstream in dnsdata-js `a5ea02d`. The vectors are at `packages/core/tests/testdata/rdata_roundtrip.json` (byte-identical) and run from `tests/zone/roundtrip.spec.ts`.
 
 ---
 
@@ -1273,7 +1275,7 @@ func (z *Zone) ReadStringStrict(text string) error
 
 **TS migration notes.** Add `read_string_strict` next to `read_string` in `dns_zone.ts` with a `DNSZonePresentationFormatError` subclass that carries the line number.
 
-**Tracking:** proposed.
+**Tracking:** landed-upstream in dnsdata-js `5bcfd8c` (`Zone.read_string_strict`, `DNSZoneParseError`).
 
 ---
 
@@ -1297,7 +1299,7 @@ func (z *Zone) PrintCanonical(onlyType uint16) (string, error)
 
 **TS migration notes.** The TS zone keeps records in a `Map`, which is insertion-ordered, so its output is stable but still not canonical; add the same pair of functions.
 
-**Tracking:** proposed.
+**Tracking:** landed-upstream in dnsdata-js `5bcfd8c` (`Zone.records_canonical`, `Zone.print_canonical`, `compare_canonical_names`).
 
 ---
 
@@ -1356,7 +1358,7 @@ func SignZone(z *zone.Zone, apex string, keys []*Key, opts Options) (*zone.Zone,
 
 **TS migration notes (UP-013).** `dnssec_key_loader.ts` already covers the BIND format; the new parts are generation, PKCS#8 export, DS / anchor derivation, `build_nsec` and `sign_zone`. Node's `crypto.generateKeyPairSync` / `crypto.sign` cover all three algorithm families; WebCrypto lacks Ed25519 on some runtimes.
 
-**Tracking:** proposed.
+**Tracking:** landed-upstream in dnsdata-js `4faff87` (the `signer` namespace, `packages/core/src/dnssec/signer/`). As in Go, `sign_zone` / `build_nsec` register the bundled handlers themselves.
 
 ---
 
@@ -1389,7 +1391,7 @@ func (a *Authority) Query(ctx context.Context, name string, qtype uint16) (resol
 
 **TS migration notes.** A `MemoryAuthority` implementing the TS `Resolver` interface with the same selection rules; load `testdata/signed/` unchanged and assert the same verdicts.
 
-**Tracking:** proposed.
+**Tracking:** landed-upstream in dnsdata-js `14638e0` (the `memory` namespace, `packages/core/src/resolver/memory/`). The vectors are at `packages/core/tests/testdata/signed/` (byte-identical); all nine cases give the same verdicts.
 
 ---
 
@@ -1436,7 +1438,7 @@ type AnswerSignature struct {
 
 **TS migration notes.** Add `answer?: Answer` to the TS `Result`; represent `rdata` as base64 and the window as ISO 8601 strings so the JSON matches.
 
-**Tracking:** proposed.
+**Tracking:** landed-upstream in dnsdata-js `aba7822` (`Result.answer`; JSON keys and timestamp form match Go).
 
 ---
 
