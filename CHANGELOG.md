@@ -19,6 +19,9 @@ this project adheres to [Semantic Versioning](https://semver.org/).
   reader that rejects, with a line number, what `ReadString` skips.
 - `Zone.RecordsCanonical`, `Zone.PrintCanonical` and
   `zone.CompareCanonicalNames` (UP-012): RFC 4034 §6 canonical order.
+- New package `dnssec/signer` (UP-013): key generation and loading
+  (PKCS#8 PEM, BIND `.private`), DS and trust-anchor derivation,
+  `BuildNSEC`, and `SignZone` with a caller-supplied validity window.
 
 ### Fixed
 

@@ -67,6 +67,7 @@ UF status legend:
 | [UP-010](#up-010) | RFC 3597 unknown types as first class: `TYPE<n>` / `CLASS<n>` mnemonics everywhere a name is parsed or printed, and `\# <len> <hex>` generic RDATA accepted for any type and written back verbatim; shared round-trip vectors in `testdata/rdata_roundtrip.json` | `types/rfc3597.go`, `zone/generic.go`, `zone/rr.go::{Handler,WireBody}`, `dnssec/zone.go::SignRR` | proposed |
 | [UP-011](#up-011) | Strict master-file reader: `Zone.ReadStringStrict` rejects what `ReadString` silently skips, with a line-numbered `*ParseError`, and leaves the zone untouched on error | `zone/strict.go` | proposed |
 | [UP-012](#up-012) | Deterministic output: `Zone.RecordsCanonical` / `PrintCanonical` in RFC 4034 §6 canonical order with duplicates removed; `zone.CompareCanonicalNames` (dnssec's now delegates to it) | `zone/canonical.go`, `dnssec/canon.go` | proposed |
+| [UP-013](#up-013) | Zone signer: key generation and loading (PKCS#8 PEM, BIND `.private`), DS / trust-anchor derivation, NSEC chain, `SignZone` with KSK/ZSK split or CSK and caller-supplied validity window | `dnssec/signer/` | proposed |
 
 UP status legend:
 
@@ -1293,6 +1294,65 @@ func (z *Zone) PrintCanonical(onlyType uint16) (string, error)
 **Behaviour.** Order is owner (canonical name order), type, class, then RDATA octets (RFC 4034 §6.3). Exact duplicates are emitted once. A record that fails to encode is an error, since its position would be undefined. `Print` and `AllRecords` are unchanged. `dnssec.CompareCanonicalNames` now delegates to the zone function; results are identical.
 
 **TS migration notes.** The TS zone keeps records in a `Map`, which is insertion-ordered, so its output is stable but still not canonical; add the same pair of functions.
+
+**Tracking:** proposed.
+
+---
+
+## UP-013
+
+### Zone signer
+
+**Go source:** `dnssec/signer/` (`key.go`, `bind.go`, `ds.go`, `nsec.go`, `sign.go`).
+
+**Why it matters.** The library could verify signed data but not produce it, beyond the single-RRset `Zone.SignRR`. Tests of validators, and anything that needs a self-contained signed hierarchy (a private root, a test TLD, a leaf zone), had to hand-assemble keys, DS records, NSEC chains and signatures.
+
+**API surface (Go).**
+
+```go
+const FlagZone, FlagSEP, FlagsKSK (257), FlagsZSK (256) uint16
+const DigestSHA256 (2), DigestSHA384 (4) uint8
+
+type Key struct {
+    Owner     string
+    Flags     uint16
+    Algorithm uint8
+    PublicKey []byte
+    // private key unexported
+}
+func GenerateKey(owner string, algorithm uint8, flags uint16) (*Key, error) // 13, 14, 15, 8, 10
+func NewKey(owner string, flags uint16, algorithm uint8, priv crypto.PrivateKey) (*Key, error)
+func ParsePKCS8PEM(owner string, flags uint16, algorithm uint8, pemBytes []byte) (*Key, error)
+func ParseBINDPrivate(owner string, flags uint16, text []byte) (*Key, error)
+func (k *Key) PKCS8PEM() ([]byte, error)
+func (k *Key) KeyTag() uint16
+func (k *Key) IsKSK() bool
+func (k *Key) DNSKEYValue() string
+func (k *Key) DNSKEYRecord(ttl uint32) (*zone.ResourceRecord, error)
+func (k *Key) DS(digestType uint8) (string, error)
+func (k *Key) AnchorDS(digestType uint8) (dnssec.AnchorDS, error)
+func RootAnchors(keys ...*Key) (*dnssec.RootAnchors, error)
+
+type Options struct {
+    Inception, Expiration time.Time // required
+    DNSKEYTTL, NSECTTL    uint32    // 0 = derive from the SOA
+}
+func BuildNSEC(z *zone.Zone, apex string, ttl uint32) ([]*zone.ResourceRecord, error)
+func SignZone(z *zone.Zone, apex string, keys []*Key, opts Options) (*zone.Zone, error)
+```
+
+**Design decisions.**
+
+- **No clock.** The signer never reads the time; the caller passes the RRSIG window, so expired and not-yet-valid signatures can be produced on purpose for negative tests.
+- **Fixed keys.** `ParseBINDPrivate` and `ParsePKCS8PEM` load a known key, so signed zones can be fixed as vectors. ECDSA signatures are still randomised; Ed25519 signatures are deterministic.
+- **What is signed.** Every authoritative RRset; at a delegation only DS and NSEC; nothing below a delegation (glue). With both KSKs and ZSKs, KSKs sign DNSKEY and ZSKs everything else; otherwise every key signs every RRset (CSK). RRSIG `Labels` excludes the root and a leading wildcard, so the root and wildcard owners are signed correctly (the older `NewRRSig` counts dots and is left unchanged).
+- **NSEC chain.** Canonical order, last NSEC back to the apex, RRSIG and NSEC always in the bitmap, only NS / DS at a delegation, no NSEC for glue or empty non-terminals; TTL = min(SOA TTL, SOA MINIMUM) per RFC 9077.
+- **Re-signing.** `SignZone` returns a new zone and drops RRSIG / NSEC / NSEC3 / NSEC3PARAM from its input, so a signed or tampered zone can be signed again. It registers the bundled handlers, as `NewVerifier` does.
+- NSEC3 is not implemented yet.
+
+**Independent checks.** When BIND's tools are installed the tests compare keys and DS with `dnssec-keygen` / `dnssec-dsfromkey`, and run `named-checkzone` and `dnssec-verify` over `PrintCanonical` output of a signed zone that has a signed and an unsigned delegation, glue, a wildcard, and a TYPE65400 RRset whose members differ in length (the case UF-005 fixes).
+
+**TS migration notes.** `dnssec_key_loader.ts` already covers the BIND format; the new parts are generation, PKCS#8 export, DS / anchor derivation, `build_nsec` and `sign_zone`. Node's `crypto.generateKeyPairSync` / `crypto.sign` cover all three algorithm families; WebCrypto lacks Ed25519 on some runtimes.
 
 **Tracking:** proposed.
 
