@@ -366,7 +366,7 @@ func (v *Verifier) descendInto(ctx context.Context, parentZone *dnssec.Zone, par
 	// Load DNSKEY for child into a new zone parented at parentZone so
 	// dnssec.Zone.verifyDelegationSigner can find DS records via the
 	// parent pointer.
-	childZone := dnssec.NewZone()
+	childZone := v.newZone()
 	childZone.SetParent(parentZone)
 	if _, err := v.loadRecords(ctx, childZone, childName, types.TypeDNSKEY, result); err != nil {
 		return nil, nil, descendBogus, err
@@ -395,7 +395,7 @@ func (v *Verifier) descendInto(ctx context.Context, parentZone *dnssec.Zone, par
 // validateRoot loads the root DNSKEY rrset, matches it against the
 // configured trust anchors, and verifies the rrset signature.
 func (v *Verifier) validateRoot(ctx context.Context, result *Result) (*dnssec.Zone, *dnssec.DNSKey, error) {
-	rootZone := dnssec.NewZone()
+	rootZone := v.newZone()
 	if _, err := v.loadRecords(ctx, rootZone, ".", types.TypeDNSKEY, result); err != nil {
 		return nil, nil, err
 	}
@@ -619,13 +619,19 @@ func normalizeQName(s string) string {
 	return s
 }
 
+// newZone returns an empty zone whose RRSIG checks use the verifier's
+// clock (RFC 4035 §5.3.1: a signature outside its validity window does
+// not verify).
+func (v *Verifier) newZone() *dnssec.Zone {
+	z := dnssec.NewZone()
+	z.SetClock(v.now)
+	return z
+}
+
 // qtypeMnemonic returns the canonical type name or "TYPE<n>" for
 // unknown types, matching presentation-form RR rendering.
 func qtypeMnemonic(t uint16) string {
-	if name, err := types.RRTypeToString(t); err == nil {
-		return name
-	}
-	return fmt.Sprintf("TYPE%d", t)
+	return types.RRTypeName(t)
 }
 
 // joinChainErr wraps ctx errors as ErrChainTimeout. context.Canceled

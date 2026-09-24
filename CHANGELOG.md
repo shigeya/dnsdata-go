@@ -27,6 +27,14 @@ this project adheres to [Semantic Versioning](https://semver.org/).
   received from the wire encoded to nothing, so a correctly signed RRset
   of those types validated as Bogus.
 - `SignRR` signs RRsets of types without a mnemonic instead of failing.
+- RRSIG digest target orders RRset members by RDATA alone and removes
+  duplicates (RFC 4034 §6.3, UF-005). RRsets whose members differ in
+  length now verify against signatures made by other signers.
+- The verifier enforces the RRSIG validity window against its clock
+  (RFC 4035 §5.3.1, UF-006). An expired or not-yet-valid signature is
+  now Bogus; previously `WithClock` was accepted and ignored. New
+  `dnssec.Zone.SetClock`; without it `dnssec.Zone` does not check the
+  window.
 
 ## [0.6.0] — 2026-05-20
 

@@ -31,11 +31,9 @@ func TestResolverFunc_Adapter(t *testing.T) {
 	}
 }
 
-// TestWithClock asserts the option is accepted and overrides the
-// default clock. We test that the override is read by the verifier
-// by feeding it a clock far in the past and watching for no panic;
-// signature validity-window enforcement against the clock is a
-// follow-up (DESIGN.md SHOULD #16, tracked separately).
+// TestWithClock asserts the option is accepted. Validity-window
+// enforcement against the clock is covered by
+// TestValidate_ClockOutsideValidityIsBogus.
 func TestWithClock(t *testing.T) {
 	clock := func() time.Time { return time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC) }
 	resolver, anchors := buildChain(t)

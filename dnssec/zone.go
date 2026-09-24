@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/shigeya/dnsdata-go/types"
 	"github.com/shigeya/dnsdata-go/wire"
@@ -43,6 +44,23 @@ type Zone struct {
 	*zone.Zone
 	parent *Zone
 	seps   []string
+	now    func() time.Time
+}
+
+// SetClock makes [Zone.VerifyRRSIG] reject an RRSIG whose validity
+// window (RFC 4034 §3.1.5, RFC 4035 §5.3.1) does not contain now().
+// Both ends are inclusive. With no clock set (the default, or nil) the
+// window is not checked.
+func (z *Zone) SetClock(now func() time.Time) { z.now = now }
+
+// withinValidity reports whether rrsig's window contains the zone's
+// clock, or true when no clock is set.
+func (z *Zone) withinValidity(rrsig *RRSig) bool {
+	if z.now == nil {
+		return true
+	}
+	t := z.now().Unix()
+	return rrsig.Inception <= t && t <= rrsig.Expire
 }
 
 // NewZone constructs an empty DNSSEC zone.
@@ -159,9 +177,19 @@ func (z *Zone) CreateDigestTarget(rrsig *RRSig, name string, typeCovered uint16)
 		if err := rr.WireBody(&b); err != nil {
 			return nil, fmt.Errorf("%w: wire body for %s: %v", ErrDNSSEC, rr.Label, err)
 		}
-		bodies = append(bodies, b.Clone())
+		body := b.Clone()
+		if len(body) < 2 {
+			return nil, fmt.Errorf("%w: no encoder for %s %s", ErrDNSSEC, rr.Label, types.RRTypeName(rr.Type))
+		}
+		bodies = append(bodies, body)
 	}
-	slices.SortFunc(bodies, bytes.Compare)
+	// RFC 4034 §6.3: order by the RDATA alone (each body carries a
+	// 2-octet RDLENGTH prefix, which must not take part), and drop
+	// duplicate RRs. Duplicates arise when two responses deposit the
+	// same record, e.g. one NSEC answering both a DS probe and the leaf
+	// query. UPSTREAM_FEEDBACK.md UF-005.
+	slices.SortFunc(bodies, func(a, b []byte) int { return bytes.Compare(a[2:], b[2:]) })
+	bodies = slices.CompactFunc(bodies, bytes.Equal)
 
 	digestTarget, err := rrsig.RDataDigestTarget()
 	if err != nil {
@@ -183,6 +211,9 @@ func (z *Zone) CreateDigestTarget(rrsig *RRSig, name string, typeCovered uint16)
 // non-erroneous reason (missing key, signature mismatch); (false, err)
 // when the verification could not be attempted at all.
 func (z *Zone) VerifyRRSIG(name string, typeCovered uint16, rrsig *RRSig, mode KeyVerifyMode) (bool, error) {
+	if !z.withinValidity(rrsig) {
+		return false, nil
+	}
 	dnskey := z.FindDNSKey(rrsig.Signer, rrsig.KeyTag)
 	if dnskey == nil {
 		return false, nil

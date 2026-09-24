@@ -42,6 +42,8 @@ DESIGN.md change.
 | [UF-002](#uf-002) | No label / name length validation | `dns_wire.ts:1-32` | robustness | [fixed-upstream (#14)](https://github.com/shigeya/dnsdata-js/pull/14) |
 | [UF-003](#uf-003) | Unknown enum inputs throw bare `RangeError`; no typed classification | `dns_type_table.ts:18,31,59,86,…` | api-shape | [fixed-upstream (#16)](https://github.com/shigeya/dnsdata-js/pull/16) |
 | [UF-004](#uf-004) | `ResourceRecord.get_wire_body` silently emits nothing when RDATA parse fails | `dns_zone.ts:175-295` | robustness | [fixed-upstream (#15)](https://github.com/shigeya/dnsdata-js/pull/15) |
+| [UF-005](#uf-005) | RRSIG digest target sorts RRset members with their RDLENGTH prefix and keeps duplicates; RFC 4034 §6.3 orders by RDATA alone and removes duplicates | `dnssec/dnssec_zone.ts:98-105` | bug | pending |
+| [UF-006](#uf-006) | RRSIG inception / expiration never checked; an expired signature validates | `dnssec/dnssec_zone.ts`, `verifier/` | bug | pending |
 
 UF status legend:
 
@@ -232,6 +234,40 @@ the easiest path.
 `TestWireBody_UnsupportedTypeIsNoOp`).
 
 **Tracking:** fixed in [shigeya/dnsdata-js#15](https://github.com/shigeya/dnsdata-js/pull/15) (closes [#4](https://github.com/shigeya/dnsdata-js/issues/4)).
+
+---
+
+## UF-005
+
+### RRSIG digest target: RRset order and duplicates
+
+**TS source:** `packages/core/src/dnssec/dnssec_zone.ts:98-105` (`create_digest_target`). Go had the same code until this fix.
+
+**Problem.** Each RR body is built as `RDLENGTH || RDATA` and the bodies are sorted as byte strings, so the length prefix decides the order whenever members differ in length. RFC 4034 §6.3 orders by the RDATA alone ("absence of an octet sorts before a zero octet"). Example: RDATA `b` (1 octet) and `ab` (2 octets) — the RFC order is `ab`, `b`; the prefixed order is `b`, `ab`. Signatures made by other signers over such RRsets (NS sets with names of different lengths, TXT, DNSKEY sets mixing key sizes) fail to verify, and signatures made here fail elsewhere.
+
+The same section requires duplicate RRs to be removed. Without that, an RRset that received the same record twice — which the chain walker does when a DS probe and the leaf query both return the same NSEC — produces a digest over both copies and never verifies.
+
+**Go-side handling.** `dnssec/zone.go::CreateDigestTarget` sorts on `body[2:]` and compacts equal bodies. A body shorter than its RDLENGTH (a type with no encoder) is now an error instead of an empty member. Tests: `dnssec/canonical_digest_test.go` (`TestCreateDigestTarget_OrdersByRDataOnly`, `TestCreateDigestTarget_DropsDuplicates`).
+
+**Recommended TS fix.** Compare `a.subarray(2)` with `b.subarray(2)` and drop adjacent equal bodies after sorting.
+
+**Tracking:** pending.
+
+---
+
+## UF-006
+
+### RRSIG validity window is not enforced
+
+**TS source:** `packages/core/src/dnssec/dnssec_zone.ts` (`verify_rrsig`), `packages/core/src/verifier/`. Go had the same gap until this fix (`WithClock` was accepted and ignored).
+
+**Problem.** RFC 4035 §5.3.1 requires the validator's current time to fall within `[inception, expiration]`. Neither sibling compared them, so an expired or not-yet-valid signature produced a Secure verdict.
+
+**Go-side handling.** `dnssec.Zone.SetClock(now func() time.Time)` makes `VerifyRRSIG` reject a signature outside its window (both ends inclusive). With no clock set, `dnssec.Zone` behaves as before. The verifier sets its clock (`WithClock`, default `time.Now`) on every zone it builds, so expired or future signatures now yield Bogus. Tests: `dnssec/canonical_digest_test.go::TestVerifyRRSet_ValidityWindow`, `verifier/validity_test.go`.
+
+**Recommended TS fix.** Add an optional clock to `DNSSECZone` and pass the verifier's `now` into every zone the chain walker creates.
+
+**Tracking:** pending.
 
 ---
 
