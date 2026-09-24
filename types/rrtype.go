@@ -125,8 +125,12 @@ func RRTypeToString(t uint16) (string, error) {
 	return "", fmt.Errorf("%w: %d", ErrUnknownRRType, t)
 }
 
-// StringToRRType is the inverse of [RRTypeToString].
+// StringToRRType is the inverse of [RRTypeToString]. It also accepts the
+// RFC 3597 §5 generic form `TYPE<n>` (case-insensitive) for any type.
 func StringToRRType(s string) (uint16, error) {
+	if t, ok := parseGenericMnemonic(s, genericTypePrefix); ok {
+		return t, nil
+	}
 	switch s {
 	case "INVALID":
 		return TypeInvalid, nil

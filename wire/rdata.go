@@ -61,13 +61,14 @@ func RDataToString(msg []byte, rrtype uint16, rdata []byte, rdataStart int) (str
 	case types.TypeNSEC3PARAM:
 		return decodeNSEC3PARAM(rdata)
 	}
-	return rfc3597(rdata), nil
+	return FormatGenericRData(rdata), nil
 }
 
-// rfc3597 emits the unknown-type generic form per RFC 3597 §5:
-// `\# <rdlen> <hex bytes>`. Spaces separate every two-octet group
-// for readability.
-func rfc3597(rdata []byte) string {
+// FormatGenericRData emits the unknown-type generic form per RFC 3597
+// §5: `\# <rdlen> <hex bytes>` (or `\# 0` for empty RDATA). The zone
+// package accepts this form for any RR type, known or not, and writes
+// the bytes back verbatim.
+func FormatGenericRData(rdata []byte) string {
 	var b strings.Builder
 	b.WriteString("\\# ")
 	b.WriteString(strconv.Itoa(len(rdata)))
@@ -236,12 +237,8 @@ func decodeRRSIG(msg []byte, rdata []byte, rdataStart int) (string, error) {
 	}
 	signature := msg[next : rdataStart+len(rdata)]
 
-	typeName, err := types.RRTypeToString(typeCovered)
-	if err != nil {
-		typeName = fmt.Sprintf("TYPE%d", typeCovered)
-	}
 	return fmt.Sprintf("%s %d %d %d %d %d %d %s %s",
-		typeName, algorithm, labels, originalTTL, expire, inception, keyTag, signer,
+		types.RRTypeName(typeCovered), algorithm, labels, originalTTL, expire, inception, keyTag, signer,
 		base64.StdEncoding.EncodeToString(signature)), nil
 }
 
@@ -257,11 +254,7 @@ func decodeNSEC(msg []byte, rdata []byte, rdataStart int) (string, error) {
 	}
 	parts := []string{nextDomain}
 	for _, t := range bitmapTypes {
-		name, err := types.RRTypeToString(t)
-		if err != nil {
-			name = fmt.Sprintf("TYPE%d", t)
-		}
-		parts = append(parts, name)
+		parts = append(parts, types.RRTypeName(t))
 	}
 	return strings.Join(parts, " "), nil
 }
@@ -307,11 +300,7 @@ func decodeNSEC3(rdata []byte) (string, error) {
 		base32hexEncode(nextHash),
 	}
 	for _, t := range bitmapTypes {
-		name, err := types.RRTypeToString(t)
-		if err != nil {
-			name = fmt.Sprintf("TYPE%d", t)
-		}
-		parts = append(parts, name)
+		parts = append(parts, types.RRTypeName(t))
 	}
 	return strings.Join(parts, " "), nil
 }

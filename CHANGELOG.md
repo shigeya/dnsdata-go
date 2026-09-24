@@ -6,6 +6,24 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- RFC 3597 unknown types (UP-010). `StringToRRType` / `StringToRRClass`
+  accept `TYPE<n>` / `CLASS<n>`; new `types.RRTypeName` /
+  `types.RRClassName` never fail. `zone.ParseGenericRData`,
+  `zone.NewResourceRecordFromRData`, `ResourceRecord.GenericRData`,
+  `ResourceRecord.TXTStrings`, and `wire.FormatGenericRData`.
+- `testdata/rdata_roundtrip.json`: RDATA round-trip vectors shared with
+  dnsdata-js.
+
+### Fixed
+
+- A value in `\# <len> <hex>` form is written verbatim by `WireBody` for
+  any type. Previously TLSA / SMIMEA / SVCB / HTTPS / unknown RDATA
+  received from the wire encoded to nothing, so a correctly signed RRset
+  of those types validated as Bogus.
+- `SignRR` signs RRsets of types without a mnemonic instead of failing.
+
 ## [0.6.0] — 2026-05-20
 
 Coordinated release with dnsdata-js v0.6.0 and mailsec-probe v0.6.0.

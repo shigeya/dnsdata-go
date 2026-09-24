@@ -62,6 +62,7 @@ UF status legend:
 | [UP-007](#up-007) | DoH (RFC 8484) client with provider failover, EDNS(0)/DO query builder shared with `resolver/auth`, raw-bytes Query plus parsing Resolve; replaces TS's legacy Google JSON-API client | `resolver/doh/` | in-progress |
 | [UP-008](#up-008) | Pluggable `Cache` interface + built-in `MemoryCache` consulted before every `Resolver.Query`; lets a batch run reuse root/TLD DNSKEY/DS rrsets (DESIGN.md §4 SHOULD #13) | `verifier/cache.go`, `verifier/verifier.go::WithCache`, `verifier/chain.go::loadRecords` | [landed-upstream (#25)](https://github.com/shigeya/dnsdata-js/pull/25) |
 | [UP-009](#up-009) | Resolver response shape: `Resolve()` now returns `(resolver.Response, error)` where `Response = {Records, AD, RCode}`; non-zero RCODE surfaces as data rather than error so callers can distinguish NXDOMAIN/NODATA/SERVFAIL and consumers (mailsec-probe) can observe AD without re-parsing | `resolver/resolver.go`, `resolver/{doh,auth}/resolve.go`, `verifier/resolver.go`, `verifier/chain.go::loadRecords` | proposed |
+| [UP-010](#up-010) | RFC 3597 unknown types as first class: `TYPE<n>` / `CLASS<n>` mnemonics everywhere a name is parsed or printed, and `\# <len> <hex>` generic RDATA accepted for any type and written back verbatim; shared round-trip vectors in `testdata/rdata_roundtrip.json` | `types/rfc3597.go`, `zone/generic.go`, `zone/rr.go::{Handler,WireBody}`, `dnssec/zone.go::SignRR` | proposed |
 
 UP status legend:
 
@@ -1152,6 +1153,54 @@ type ResolverFunc func(ctx, name, qtype) (resolver.Response, error)
 - The `Cache` interface continues to cache only the records slice, not the full Response. AD is per-query and verifier doesn't need to reuse it; RCode is implicit (cache only stores hits).
 
 **Status.** Shipped in dnsdata-go (commit pending on `main`). TS port-back not started; this is a breaking change at the resolver and verifier interface boundary so it should land in dnsdata-js as a coordinated v0.x bump.
+
+**Tracking:** proposed.
+
+---
+
+## UP-010
+
+### RFC 3597 unknown types as first class
+
+**Go source:** `types/rfc3597.go`, `types/rrtype.go::StringToRRType`, `types/rrclass.go::StringToRRClass`, `zone/generic.go`, `zone/rr.go::{Handler,WireBody,String}`, `zone/svcb.go::svcbFromRData`, `dnssec/zone.go::SignRR`, `dnssec/rrsig.go::ValueString`, `wire/rdata.go::FormatGenericRData`. Shared vectors: `testdata/rdata_roundtrip.json`.
+
+**Why it matters.** A type without a mnemonic (for example an unassigned or private-use type that carries TLSA-shaped RDATA) could not travel through the library:
+
+- `StringToRRType("TYPE65400")` failed, so the zone parser silently dropped the line, and `SignRR` failed on `RRTypeToString(typeCovered)` for any such RRset.
+- `RDataToString` renders every type it has no decoder for (TLSA, SMIMEA, SVCB, HTTPS, unknown) as `\# <len> <hex>`, but nothing accepted that form back: the TLSA / SVCB handlers failed to parse it and `WireBody` wrote nothing. A validator that rebuilds RRsets from received data therefore produced a wrong digest target and reported a correctly signed RRset as Bogus. This is the same class of hole as UF-004.
+
+**API surface (Go).**
+
+```go
+// types
+func StringToRRType(s string) (uint16, error)   // now also TYPE<n>, case-insensitive
+func StringToRRClass(s string) (uint16, error)  // now also CLASS<n>
+func RRTypeName(t uint16) string                // mnemonic or TYPE<n>, never fails
+func RRClassName(c uint16) string               // mnemonic or CLASS<n>
+
+// wire
+func FormatGenericRData(rdata []byte) string    // `\# <len> <hex>` (was private rfc3597)
+
+// zone
+func ParseGenericRData(value string) (rdata []byte, isGeneric bool, err error)
+func NewResourceRecordFromRData(label string, ttl uint32, class, rrtype uint16, rdata []byte) (*ResourceRecord, error)
+func (rr *ResourceRecord) GenericRData() ([]byte, bool, error)
+func (rr *ResourceRecord) TXTStrings() ([]string, error)
+```
+
+**Behaviour.**
+
+- `WireBody` checks for the generic form first and writes the octets verbatim for **any** type, ahead of any handler. The octets never pass through a re-encoding, so the RFC 4034 §6.2 canonical form of received RDATA (TLSA, SVCB, TXT and unknown types are not lower-cased) is preserved. A declared length that does not match the hex is `ErrPresentationFormat`.
+- `Handler()` decodes a generic value by type when a handler is registered for it: TLSA / SMIMEA and SVCB / HTTPS from their octets, and any type that `RDataToString` decodes (DNSKEY, RRSIG, DS, NSEC, …) through its presentation form. Registration stays opt-in; with no handler registered, `Handler()` still returns nil.
+- Every place that prints a type or class name falls back to `TYPE<n>` / `CLASS<n>`: `ResourceRecord.String`, RRSIG type covered (`SignRR`, `ValueString`, `RDataToString`), and NSEC / NSEC3 bitmaps. NSEC / NSEC3 / CSYNC bitmap parsing accepts `TYPE<n>` through `StringToRRType`.
+
+**Round-trip property.** `zone/roundtrip_test.go` runs every vector in `testdata/rdata_roundtrip.json` through wire → `RDataToString` → `NewResourceRecord` → `WireBody`, and again through the generic form of the same octets, and requires byte equality both ways. The file is meant to be copied byte-identical into dnsdata-js so both siblings run the same vectors.
+
+**TS migration notes.**
+
+- `StringToRRType` / `StringToRRClass` in `dns_type_table.ts` gain the `TYPE<n>` / `CLASS<n>` branch; keep the typed error for anything else (UF-003).
+- `ResourceRecord.get_wire_body` should test for `\#` before dispatching to a handler or the built-in encoders.
+- Load the shared JSON vectors from the spec rather than transcribing them.
 
 **Tracking:** proposed.
 

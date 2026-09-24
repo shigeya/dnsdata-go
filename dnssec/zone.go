@@ -340,13 +340,9 @@ func (z *Zone) SignRR(name string, ttl uint32, typeCovered uint16, key *DNSKey, 
 		return nil, err
 	}
 
-	typeName, err := types.RRTypeToString(typeCovered)
-	if err != nil {
-		return nil, err
-	}
 	sigB64 := base64.StdEncoding.EncodeToString(signature)
 	value := fmt.Sprintf("%s %d %d %d %d %d %d %s %s",
-		typeName, key.Algorithm, rrsig.Labels, ttl, expire, inception,
+		types.RRTypeName(typeCovered), key.Algorithm, rrsig.Labels, ttl, expire, inception,
 		key.KeyTag, key.Label(), sigB64)
 	return zone.NewResourceRecord(name, ttl, "IN", "RRSIG", value)
 }

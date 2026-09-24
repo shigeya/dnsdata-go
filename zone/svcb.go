@@ -141,6 +141,39 @@ func (s *SVCB) Clone() RecordHandler {
 	}
 }
 
+// svcbFromRData decodes SVCB / HTTPS wire octets (§2.2) into a handler.
+// Param values are kept as octets, so no presentation round trip is
+// involved.
+func svcbFromRData(rr *ResourceRecord, rdata []byte) (*SVCB, error) {
+	if len(rdata) < 3 {
+		return nil, fmt.Errorf("%w: SVCB rdata length %d", ErrRDataFormat, len(rdata))
+	}
+	target, pos, err := wire.ParseDomainName(rdata, 2)
+	if err != nil {
+		return nil, fmt.Errorf("%w: SVCB target: %v", ErrRDataFormat, err)
+	}
+	var params []SvcParam
+	for pos < len(rdata) {
+		if pos+4 > len(rdata) {
+			return nil, fmt.Errorf("%w: SVCB param header truncated", ErrRDataFormat)
+		}
+		key := uint16(rdata[pos])<<8 | uint16(rdata[pos+1])
+		n := int(rdata[pos+2])<<8 | int(rdata[pos+3])
+		pos += 4
+		if pos+n > len(rdata) {
+			return nil, fmt.Errorf("%w: SVCB param %d value truncated", ErrRDataFormat, key)
+		}
+		params = append(params, SvcParam{Key: key, Value: append([]byte(nil), rdata[pos:pos+n]...)})
+		pos += n
+	}
+	return &SVCB{
+		rr:       rr,
+		Priority: uint16(rdata[0])<<8 | uint16(rdata[1]),
+		Target:   target,
+		Params:   params,
+	}, nil
+}
+
 // svcbFactory adapts [ParseSVCB] into [HandlerFactory]. Returns nil on
 // parse failure so the zone parser falls back to keeping the value as
 // text (TS parity).

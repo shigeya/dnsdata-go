@@ -38,8 +38,12 @@ func RRClassToString(c uint16) (string, error) {
 	return "", fmt.Errorf("%w: %d", ErrUnknownRRClass, c)
 }
 
-// StringToRRClass is the inverse of [RRClassToString].
+// StringToRRClass is the inverse of [RRClassToString]. It also accepts
+// the RFC 3597 §5 generic form `CLASS<n>` (case-insensitive).
 func StringToRRClass(s string) (uint16, error) {
+	if c, ok := parseGenericMnemonic(s, genericClassPrefix); ok {
+		return c, nil
+	}
 	switch s {
 	case "INVALID":
 		return ClassInvalid, nil

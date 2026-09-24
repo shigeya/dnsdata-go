@@ -173,13 +173,9 @@ func (s *RRSig) WireBody(b *wire.Builder) error {
 // Inception are emitted as their integer epoch-seconds, matching the
 // dnsdata-js implementation.
 func (s *RRSig) ValueString() string {
-	typeName, err := types.RRTypeToString(s.TypeCovered)
-	if err != nil {
-		typeName = fmt.Sprintf("TYPE%d", s.TypeCovered)
-	}
 	sigB64 := base64.StdEncoding.EncodeToString(s.Signature)
 	return fmt.Sprintf("%s %d %d %d %d %d %d %s %s",
-		typeName, s.Algorithm, s.Labels, s.OriginalTTL,
+		types.RRTypeName(s.TypeCovered), s.Algorithm, s.Labels, s.OriginalTTL,
 		s.Expire, s.Inception, s.KeyTag, s.Signer, sigB64)
 }
 

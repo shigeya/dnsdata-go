@@ -128,11 +128,25 @@ func coerceType(v any) (uint16, error) {
 // Handler returns the type-specific handler for this RR (constructing it
 // on first access via the registered factory), or nil if no factory is
 // registered for the type. Result is cached on the record.
+//
+// A value in RFC 3597 generic form (`\# <len> <hex>`) is decoded from
+// its octets by type, so a known type received as generic RDATA still
+// yields its structured handler.
 func (rr *ResourceRecord) Handler() RecordHandler {
 	if rr.handler != nil {
 		return rr.handler
 	}
-	if f := lookupRRHandler(rr.Type); f != nil {
+	f := lookupRRHandler(rr.Type)
+	if f == nil {
+		return nil
+	}
+	raw, isGeneric, err := rr.GenericRData()
+	switch {
+	case err != nil:
+		return nil
+	case isGeneric:
+		rr.handler = handlerFromGeneric(rr, f, raw)
+	default:
 		rr.handler = f(rr, rr.Value)
 	}
 	return rr.handler
@@ -157,10 +171,23 @@ func (rr *ResourceRecord) WireHeader(b *wire.Builder) error {
 // handler exists it is delegated to; otherwise the built-in encoders for
 // A / NS / CNAME / SOA / PTR / DNAME / MX / TXT / AAAA / SRV / CAA are used.
 //
+// A value in RFC 3597 generic form is written verbatim for any type,
+// ahead of any handler, so its octets (and hence its canonical form)
+// never pass through a re-encoding.
+//
 // For types without a built-in or registered encoder the call is a no-op.
 // Returns [ErrRDataFormat] when an encoder recognises the type but the
-// value is malformed.
+// value is malformed, and [ErrPresentationFormat] for malformed generic
+// RDATA.
 func (rr *ResourceRecord) WireBody(b *wire.Builder) error {
+	raw, isGeneric, err := rr.GenericRData()
+	if err != nil {
+		return err
+	}
+	if isGeneric {
+		writeWireGeneric(b, raw)
+		return nil
+	}
 	if h := rr.Handler(); h != nil {
 		return h.WireBody(b)
 	}
@@ -188,15 +215,8 @@ func (rr *ResourceRecord) WireBody(b *wire.Builder) error {
 // String formats the RR in presentation form: "label ttl class type value".
 // Equivalent to TS's to_string().
 func (rr *ResourceRecord) String() string {
-	className, err := types.RRClassToString(rr.Class)
-	if err != nil {
-		className = fmt.Sprintf("CLASS%d", rr.Class)
-	}
-	typeName, err := types.RRTypeToString(rr.Type)
-	if err != nil {
-		typeName = fmt.Sprintf("TYPE%d", rr.Type)
-	}
-	return fmt.Sprintf("%s %d %s %s %s", rr.Label, rr.TTL, className, typeName, rr.Value)
+	return fmt.Sprintf("%s %d %s %s %s", rr.Label, rr.TTL,
+		types.RRClassName(rr.Class), types.RRTypeName(rr.Type), rr.Value)
 }
 
 // --------------------------------------------------------------------
