@@ -22,6 +22,10 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 - New package `dnssec/signer` (UP-013): key generation and loading
   (PKCS#8 PEM, BIND `.private`), DS and trust-anchor derivation,
   `BuildNSEC`, and `SignZone` with a caller-supplied validity window.
+- New package `resolver/memory` (UP-014): an in-memory authority for
+  signed zones usable as `verifier.Resolver`, with fault injection.
+  Tests, an example and `testdata/signed/` fix validation under a
+  private root via `WithTrustAnchors` and `WithClock`.
 
 ### Fixed
 

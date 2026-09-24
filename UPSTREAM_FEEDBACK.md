@@ -68,6 +68,7 @@ UF status legend:
 | [UP-011](#up-011) | Strict master-file reader: `Zone.ReadStringStrict` rejects what `ReadString` silently skips, with a line-numbered `*ParseError`, and leaves the zone untouched on error | `zone/strict.go` | proposed |
 | [UP-012](#up-012) | Deterministic output: `Zone.RecordsCanonical` / `PrintCanonical` in RFC 4034 §6 canonical order with duplicates removed; `zone.CompareCanonicalNames` (dnssec's now delegates to it) | `zone/canonical.go`, `dnssec/canon.go` | proposed |
 | [UP-013](#up-013) | Zone signer: key generation and loading (PKCS#8 PEM, BIND `.private`), DS / trust-anchor derivation, NSEC chain, `SignZone` with KSK/ZSK split or CSK and caller-supplied validity window | `dnssec/signer/` | proposed |
+| [UP-014](#up-014) | In-memory authority (`verifier.Resolver`) for signed zones with DS from the parent side, referrals, NSEC proofs, CNAME / DNAME / wildcard, fault injection; private-root validation fixed by tests, an example and shared vectors in `testdata/signed/` | `resolver/memory/` | proposed |
 
 UP status legend:
 
@@ -1352,7 +1353,40 @@ func SignZone(z *zone.Zone, apex string, keys []*Key, opts Options) (*zone.Zone,
 
 **Independent checks.** When BIND's tools are installed the tests compare keys and DS with `dnssec-keygen` / `dnssec-dsfromkey`, and run `named-checkzone` and `dnssec-verify` over `PrintCanonical` output of a signed zone that has a signed and an unsigned delegation, glue, a wildcard, and a TYPE65400 RRset whose members differ in length (the case UF-005 fixes).
 
-**TS migration notes.** `dnssec_key_loader.ts` already covers the BIND format; the new parts are generation, PKCS#8 export, DS / anchor derivation, `build_nsec` and `sign_zone`. Node's `crypto.generateKeyPairSync` / `crypto.sign` cover all three algorithm families; WebCrypto lacks Ed25519 on some runtimes.
+**TS migration notes (UP-013).** `dnssec_key_loader.ts` already covers the BIND format; the new parts are generation, PKCS#8 export, DS / anchor derivation, `build_nsec` and `sign_zone`. Node's `crypto.generateKeyPairSync` / `crypto.sign` cover all three algorithm families; WebCrypto lacks Ed25519 on some runtimes.
+
+**Tracking:** proposed.
+
+---
+
+## UP-014
+
+### In-memory authority and private-root validation
+
+**Go source:** `resolver/memory/` (`memory.go`, `index.go`, `answer.go`), tests and `Example` in the same package; shared vectors in `testdata/signed/`.
+
+**Why it matters.** The verifier's tests fed it hand-built `(name, qtype) → records` maps, which only answer the queries a test author anticipated. An authority that answers like a real server lets a signed hierarchy — including a private root used as the trust anchor — be validated end to end offline, and exposes problems a map hides (the duplicate-NSEC case behind UF-005 appeared this way).
+
+**API surface (Go).**
+
+```go
+package memory
+
+var ErrConfig error
+type Option func(*config)
+func WithZone(apex string, z *zone.Zone) Option
+func WithFault(name string, qtype uint16, rcode uint8) Option
+func New(opts ...Option) (*Authority, error)
+func (a *Authority) Query(ctx context.Context, name string, qtype uint16) (resolver.Response, error)
+```
+
+**Behaviour.** The deepest zone containing the name answers, except that a DS query for a zone apex goes to the parent. Within a zone: at or below a delegation point → referral (NS plus the signed DS, or the NSEC proving no DS); an existing name → the RRset with its RRSIGs, else a CNAME, else NODATA with the name's NSEC; an empty non-terminal → NODATA with the spanning NSEC; below a DNAME → the DNAME; otherwise wildcard synthesis from `*.<closest encloser>` (answer and RRSIG rewritten to the query name, plus the NSEC covering the next closer name), or NXDOMAIN with the NSECs covering the name and the wildcard. A name outside every zone gets REFUSED; `WithFault` returns a fixed RCODE. Responses are fresh copies; the authority is immutable after `New` and safe for concurrent use. NSEC3 proofs are not generated.
+
+**Private root as trust anchor (C-9).** No verifier change was needed: `signer.RootAnchors(rootKSK)` → `verifier.WithTrustAnchors`, and `verifier.WithClock` pins the time. Covered by `TestHierarchy_Verdicts` (Secure, SecureNoData, SecureNXDomain, wildcard, CNAME, unsigned delegation → Insecure), `TestHierarchy_TamperedRRsetIsBogus`, `TestHierarchy_ExpiredSignatureIsBogus`, `TestHierarchy_PrintAndReadBack`, and the package `Example`.
+
+**Shared vectors.** `testdata/signed/` holds a private root, `test.` and `example.test.` as canonical master files, the BIND keys that signed them (test keys only), `root-anchors.json`, and `cases.json` (query, clock, expected verdict). `TestSignedVectors` validates every case from those files; `go test ./resolver/memory -run TestSignedVectors -update` regenerates them. BIND's `dnssec-verify` accepts all three zones (`-z` for the two single-key zones).
+
+**TS migration notes.** A `MemoryAuthority` implementing the TS `Resolver` interface with the same selection rules; load `testdata/signed/` unchanged and assert the same verdicts.
 
 **Tracking:** proposed.
 

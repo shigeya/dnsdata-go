@@ -14,7 +14,9 @@ import (
 //
 //   - DoH backend (resolver/doh)
 //   - Authoritative backend (resolver/auth)
-//   - In-memory fixture (used by this package's tests)
+//   - In-memory authority for signed zones (resolver/memory); with
+//     dnssec/signer and [WithTrustAnchors] it validates a hierarchy
+//     under a private root
 //
 // Query semantics:
 //
