@@ -1,6 +1,10 @@
 package dnssec
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/shigeya/dnsdata-go/zone"
+)
 
 // CompareCanonicalNames compares a and b in DNSSEC canonical name order
 // per RFC 4034 §6.1: labels are compared right-to-left, case-folded to
@@ -20,30 +24,11 @@ import "strings"
 //	z.example     < \001.z.example
 //	\001.z.example < *.z.example
 //	*.z.example   < \200.z.example
+//
+// It delegates to [zone.CompareCanonicalNames], which the zone package
+// also uses for [zone.Zone.RecordsCanonical].
 func CompareCanonicalNames(a, b string) int {
-	la := canonLabels(a)
-	lb := canonLabels(b)
-
-	// Compare label-by-label from the right (the rightmost label is the
-	// most significant in canonical order).
-	for i := 0; i < len(la) && i < len(lb); i++ {
-		ai := la[len(la)-1-i]
-		bi := lb[len(lb)-1-i]
-		if ai < bi {
-			return -1
-		}
-		if ai > bi {
-			return 1
-		}
-	}
-	// All shared labels matched. The shorter name sorts lower.
-	switch {
-	case len(la) < len(lb):
-		return -1
-	case len(la) > len(lb):
-		return 1
-	}
-	return 0
+	return zone.CompareCanonicalNames(a, b)
 }
 
 // canonLabels splits name on "." after lower-casing and trimming the

@@ -63,6 +63,8 @@ UF status legend:
 | [UP-008](#up-008) | Pluggable `Cache` interface + built-in `MemoryCache` consulted before every `Resolver.Query`; lets a batch run reuse root/TLD DNSKEY/DS rrsets (DESIGN.md §4 SHOULD #13) | `verifier/cache.go`, `verifier/verifier.go::WithCache`, `verifier/chain.go::loadRecords` | [landed-upstream (#25)](https://github.com/shigeya/dnsdata-js/pull/25) |
 | [UP-009](#up-009) | Resolver response shape: `Resolve()` now returns `(resolver.Response, error)` where `Response = {Records, AD, RCode}`; non-zero RCODE surfaces as data rather than error so callers can distinguish NXDOMAIN/NODATA/SERVFAIL and consumers (mailsec-probe) can observe AD without re-parsing | `resolver/resolver.go`, `resolver/{doh,auth}/resolve.go`, `verifier/resolver.go`, `verifier/chain.go::loadRecords` | proposed |
 | [UP-010](#up-010) | RFC 3597 unknown types as first class: `TYPE<n>` / `CLASS<n>` mnemonics everywhere a name is parsed or printed, and `\# <len> <hex>` generic RDATA accepted for any type and written back verbatim; shared round-trip vectors in `testdata/rdata_roundtrip.json` | `types/rfc3597.go`, `zone/generic.go`, `zone/rr.go::{Handler,WireBody}`, `dnssec/zone.go::SignRR` | proposed |
+| [UP-011](#up-011) | Strict master-file reader: `Zone.ReadStringStrict` rejects what `ReadString` silently skips, with a line-numbered `*ParseError`, and leaves the zone untouched on error | `zone/strict.go` | proposed |
+| [UP-012](#up-012) | Deterministic output: `Zone.RecordsCanonical` / `PrintCanonical` in RFC 4034 §6 canonical order with duplicates removed; `zone.CompareCanonicalNames` (dnssec's now delegates to it) | `zone/canonical.go`, `dnssec/canon.go` | proposed |
 
 UP status legend:
 
@@ -1201,6 +1203,60 @@ func (rr *ResourceRecord) TXTStrings() ([]string, error)
 - `StringToRRType` / `StringToRRClass` in `dns_type_table.ts` gain the `TYPE<n>` / `CLASS<n>` branch; keep the typed error for anything else (UF-003).
 - `ResourceRecord.get_wire_body` should test for `\#` before dispatching to a handler or the built-in encoders.
 - Load the shared JSON vectors from the spec rather than transcribing them.
+
+**Tracking:** proposed.
+
+---
+
+## UP-011
+
+### Strict master-file reader
+
+**Go source:** `zone/strict.go`.
+
+**Why it matters.** `ReadString` skips any line it cannot parse, so a record of a type the reader does not know simply disappears and the caller only notices when a later lookup or signature fails. Tests and zone generators need a reader that fails loudly at the offending line.
+
+**API surface (Go).**
+
+```go
+type ParseError struct {
+    Line int    // first physical line of the record, 1-based
+    Text string
+    Err  error  // wraps ErrPresentationFormat or ErrRDataFormat
+}
+
+func (z *Zone) ReadStringStrict(text string) error
+```
+
+**Behaviour.** Same syntax as `ReadString` (`$ORIGIN`, `$TTL`, `;` comments, parenthesised continuations, owner inherited from a leading blank, `@`), plus: `;` / `(` / `)` inside quotes are data; the class may be any mnemonic or `CLASS<n>`; TTL and class may appear in either order. Rejected: unknown type or class, relative owner without `$ORIGIN`, empty labels, no TTL and no `$TTL`, missing or malformed RDATA, generic RDATA whose length does not match, a type with no encoder (the record is encoded once as a check), unbalanced parentheses, and any other directive (`$INCLUDE`, `$GENERATE`). The zone is modified only if the whole text parses. Names inside RDATA are not qualified with `$ORIGIN` (neither reader does).
+
+`ReadString` is unchanged.
+
+**TS migration notes.** Add `read_string_strict` next to `read_string` in `dns_zone.ts` with a `DNSZonePresentationFormatError` subclass that carries the line number.
+
+**Tracking:** proposed.
+
+---
+
+## UP-012
+
+### Deterministic, canonical zone output
+
+**Go source:** `zone/canonical.go`, `dnssec/canon.go::CompareCanonicalNames`.
+
+**Why it matters.** `Zone.Print` and `AllRecords` follow map iteration order, so a generated zone file differs from run to run and cannot be fixed as a test vector or diffed.
+
+**API surface (Go).**
+
+```go
+func CompareCanonicalNames(a, b string) int                 // RFC 4034 §6.1
+func (z *Zone) RecordsCanonical() ([]*ResourceRecord, error)
+func (z *Zone) PrintCanonical(onlyType uint16) (string, error)
+```
+
+**Behaviour.** Order is owner (canonical name order), type, class, then RDATA octets (RFC 4034 §6.3). Exact duplicates are emitted once. A record that fails to encode is an error, since its position would be undefined. `Print` and `AllRecords` are unchanged. `dnssec.CompareCanonicalNames` now delegates to the zone function; results are identical.
+
+**TS migration notes.** The TS zone keeps records in a `Map`, which is insertion-ordered, so its output is stable but still not canonical; add the same pair of functions.
 
 **Tracking:** proposed.
 

@@ -15,6 +15,10 @@ this project adheres to [Semantic Versioning](https://semver.org/).
   `ResourceRecord.TXTStrings`, and `wire.FormatGenericRData`.
 - `testdata/rdata_roundtrip.json`: RDATA round-trip vectors shared with
   dnsdata-js.
+- `Zone.ReadStringStrict` and `zone.ParseError` (UP-011): a master-file
+  reader that rejects, with a line number, what `ReadString` skips.
+- `Zone.RecordsCanonical`, `Zone.PrintCanonical` and
+  `zone.CompareCanonicalNames` (UP-012): RFC 4034 §6 canonical order.
 
 ### Fixed
 
