@@ -26,6 +26,10 @@ this project adheres to [Semantic Versioning](https://semver.org/).
   signed zones usable as `verifier.Resolver`, with fault injection.
   Tests, an example and `testdata/signed/` fix validation under a
   private root via `WithTrustAnchors` and `WithClock`.
+- `verifier.Result.Answer` (UP-015): the validated terminal RRset with
+  presentation values, RDATA octets and TTLs, and the RRSIGs that
+  verified it with their validity windows. Set only for Secure; other
+  results serialise as before.
 
 ### Fixed
 

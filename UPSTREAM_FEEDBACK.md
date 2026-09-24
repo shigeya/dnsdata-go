@@ -69,6 +69,7 @@ UF status legend:
 | [UP-012](#up-012) | Deterministic output: `Zone.RecordsCanonical` / `PrintCanonical` in RFC 4034 §6 canonical order with duplicates removed; `zone.CompareCanonicalNames` (dnssec's now delegates to it) | `zone/canonical.go`, `dnssec/canon.go` | proposed |
 | [UP-013](#up-013) | Zone signer: key generation and loading (PKCS#8 PEM, BIND `.private`), DS / trust-anchor derivation, NSEC chain, `SignZone` with KSK/ZSK split or CSK and caller-supplied validity window | `dnssec/signer/` | proposed |
 | [UP-014](#up-014) | In-memory authority (`verifier.Resolver`) for signed zones with DS from the parent side, referrals, NSEC proofs, CNAME / DNAME / wildcard, fault injection; private-root validation fixed by tests, an example and shared vectors in `testdata/signed/` | `resolver/memory/` | proposed |
+| [UP-015](#up-015) | `Result.Answer`: the validated terminal RRset (presentation value, RDATA octets, TTL) and the RRSIGs that verified it with their validity windows; set only for Secure | `verifier/result.go`, `verifier/answer.go`, `verifier/chain.go::resolveLeaf` | proposed |
 
 UP status legend:
 
@@ -1387,6 +1388,53 @@ func (a *Authority) Query(ctx context.Context, name string, qtype uint16) (resol
 **Shared vectors.** `testdata/signed/` holds a private root, `test.` and `example.test.` as canonical master files, the BIND keys that signed them (test keys only), `root-anchors.json`, and `cases.json` (query, clock, expected verdict). `TestSignedVectors` validates every case from those files; `go test ./resolver/memory -run TestSignedVectors -update` regenerates them. BIND's `dnssec-verify` accepts all three zones (`-z` for the two single-key zones).
 
 **TS migration notes.** A `MemoryAuthority` implementing the TS `Resolver` interface with the same selection rules; load `testdata/signed/` unchanged and assert the same verdicts.
+
+**Tracking:** proposed.
+
+---
+
+## UP-015
+
+### The validated answer on `Result`
+
+**Go source:** `verifier/result.go` (`Answer`, `AnswerRecord`, `AnswerSignature`), `verifier/answer.go`, `verifier/chain.go::{resolveLeaf,Validate}`.
+
+**Why it matters.** `Result` said whether an RRset was Secure but not what the RRset was, so a consumer had to query the name again and use data that was never validated — possibly different data.
+
+**API surface (Go).**
+
+```go
+type Result struct {
+    // …existing fields…
+    Answer *Answer `json:"answer,omitempty"` // only when Verdict == VerdictSecure
+}
+type Answer struct {
+    Name       string            `json:"name"`
+    Type       uint16            `json:"type"`
+    Records    []AnswerRecord    `json:"records"`
+    Signatures []AnswerSignature `json:"signatures"`
+}
+type AnswerRecord struct {
+    Name  string `json:"name"`
+    TTL   uint32 `json:"ttl"`
+    Class uint16 `json:"class"`
+    Type  uint16 `json:"type"`
+    Value string `json:"value"` // presentation form as received
+    RData []byte `json:"rdata"` // RDATA octets the signature covered; base64 in JSON
+}
+type AnswerSignature struct {
+    KeyTag     uint16    `json:"keyTag"`
+    Algorithm  uint8     `json:"algorithm"`
+    Signer     string    `json:"signer"`
+    Labels     uint8     `json:"labels"`
+    Inception  time.Time `json:"inception"`  // UTC, RFC 3339 in JSON
+    Expiration time.Time `json:"expiration"`
+}
+```
+
+**Behaviour.** Set only when the final verdict is Secure, so it never carries unvalidated data; `omitempty` keeps every other Result's JSON unchanged. After CNAME / DNAME hops it is the terminal RRset; for a wildcard answer, the synthesised RRset at the query name (the RRSIG `Labels` shows the synthesis). `Signatures` lists each RRSIG over the RRset that verifies on its own at the verifier's clock. For a type the library does not decode, `Value` stays in RFC 3597 form and `RData` is its exact octets. mailsec-probe's tests pass unchanged against this version.
+
+**TS migration notes.** Add `answer?: Answer` to the TS `Result`; represent `rdata` as base64 and the window as ISO 8601 strings so the JSON matches.
 
 **Tracking:** proposed.
 

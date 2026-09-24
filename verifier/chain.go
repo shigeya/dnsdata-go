@@ -103,6 +103,9 @@ func (v *Verifier) Validate(ctx context.Context, qname string, qtype uint16) (*R
 		if outcome.Wildcard != nil {
 			result.Wildcard = outcome.Wildcard
 		}
+		if result.Verdict == VerdictSecure {
+			result.Answer = outcome.Answer
+		}
 		return result, nil
 	}
 
@@ -127,6 +130,7 @@ type hopOutcome struct {
 	NegativeReason string
 	Alias          *AliasStep
 	Wildcard       *WildcardInfo
+	Answer         *Answer // the verified RRset of a terminal positive hop
 }
 
 // validateOneHop runs a single chain-walk + leaf-resolution against
@@ -228,6 +232,10 @@ func (v *Verifier) resolveLeaf(ctx context.Context, currentZone *dnssec.Zone, cu
 				BogusReason: fmt.Sprintf("RRSIG over %s/%s did not verify", qname, qtypeMnemonic(qtype)),
 			}, nil
 		}
+		answer, err := buildAnswer(currentZone, qname, qtype)
+		if err != nil {
+			return nil, err
+		}
 		// Verified. If the covering RRSIG's Labels field indicates
 		// wildcard synthesis, RFC 4035 §5.3.4 also requires a proof
 		// that the next-closer name does not exist — otherwise the
@@ -242,9 +250,9 @@ func (v *Verifier) resolveLeaf(ctx context.Context, currentZone *dnssec.Zone, cu
 				}, nil
 			}
 			wc.ProofReason = reason
-			return &hopOutcome{Verdict: VerdictSecure, Wildcard: wc}, nil
+			return &hopOutcome{Verdict: VerdictSecure, Wildcard: wc, Answer: answer}, nil
 		}
-		return &hopOutcome{Verdict: VerdictSecure}, nil
+		return &hopOutcome{Verdict: VerdictSecure, Answer: answer}, nil
 	}
 
 	// Resolver placed records into currentZone but none matched

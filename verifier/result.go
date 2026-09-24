@@ -1,5 +1,7 @@
 package verifier
 
+import "time"
+
 // Result is the outcome of [Verifier.Validate]. It is intentionally
 // JSON-friendly (DESIGN.md MUST 10): every field uses primitive types
 // or other JSON-friendly structs from this package, and the public
@@ -57,6 +59,46 @@ type Result struct {
 	// [VerdictSecure]; consumers that need to distinguish "real
 	// rrset" from "wildcard-synthesised rrset" check this field.
 	Wildcard *WildcardInfo `json:"wildcard,omitempty"`
+
+	// Answer is the RRset that was validated, set only when Verdict is
+	// [VerdictSecure]. After CNAME / DNAME hops it is the terminal
+	// RRset; for a wildcard answer it is the synthesised RRset at the
+	// query name. Consumers should use this rather than querying the
+	// name again, so that what they act on is exactly what was
+	// validated.
+	Answer *Answer `json:"answer,omitempty"`
+}
+
+// Answer is a validated RRset with the signatures that verified it.
+type Answer struct {
+	Name       string            `json:"name"`
+	Type       uint16            `json:"type"`
+	Records    []AnswerRecord    `json:"records"`
+	Signatures []AnswerSignature `json:"signatures"`
+}
+
+// AnswerRecord is one record of a validated RRset. Value is the
+// presentation form as received (RFC 3597 `\# …` for types the library
+// does not decode); RData is the RDATA octets the signature covered
+// (encoded to JSON as base64).
+type AnswerRecord struct {
+	Name  string `json:"name"`
+	TTL   uint32 `json:"ttl"`
+	Class uint16 `json:"class"`
+	Type  uint16 `json:"type"`
+	Value string `json:"value"`
+	RData []byte `json:"rdata"`
+}
+
+// AnswerSignature describes an RRSIG over the answer that verified at
+// the verifier's clock: who signed it and its validity window (UTC).
+type AnswerSignature struct {
+	KeyTag     uint16    `json:"keyTag"`
+	Algorithm  uint8     `json:"algorithm"`
+	Signer     string    `json:"signer"`
+	Labels     uint8     `json:"labels"`
+	Inception  time.Time `json:"inception"`
+	Expiration time.Time `json:"expiration"`
 }
 
 // WildcardInfo describes a wildcard-synthesised positive answer.

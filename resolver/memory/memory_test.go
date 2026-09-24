@@ -86,6 +86,43 @@ func TestHierarchy_Verdicts(t *testing.T) {
 	}
 }
 
+// C-7: Result.Answer is the RRset that was validated — after a CNAME
+// the target's RRset, for a wildcard the synthesised RRset at the query
+// name, and for a type without a mnemonic its exact octets.
+func TestHierarchy_Answer(t *testing.T) {
+	h := buildHierarchy(t)
+	v := newVerifier(t, h, newAuthority(t, h, h.leaf), now)
+	cases := []struct {
+		qname, wantName string
+		qtype           uint16
+		wantValue       string
+		wantLabels      uint8
+	}{
+		{"alias.example.test.", "www.example.test.", types.TypeA, "192.0.2.10", 3},
+		{"x.wild.example.test.", "x.wild.example.test.", types.TypeA, "192.0.2.20", 3},
+		{"key.example.test.", "key.example.test.", 65400, `\# 35 030101000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f`, 3},
+	}
+	for _, tc := range cases {
+		t.Run(tc.qname, func(t *testing.T) {
+			res := validate(t, v, tc.qname, tc.qtype)
+			a := res.Answer
+			if res.Verdict != verifier.VerdictSecure || a == nil || len(a.Records) != 1 || len(a.Signatures) == 0 {
+				t.Fatalf("Verdict %v, Answer %+v", res.Verdict, a)
+			}
+			if a.Name != tc.wantName || a.Records[0].Value != tc.wantValue {
+				t.Errorf("Answer %s = %q, want %s = %q", a.Name, a.Records[0].Value, tc.wantName, tc.wantValue)
+			}
+			if a.Signatures[0].Labels != tc.wantLabels || !a.Signatures[0].Inception.Equal(inception) || !a.Signatures[0].Expiration.Equal(expiration) {
+				t.Errorf("signature %+v", a.Signatures[0])
+			}
+		})
+	}
+	res := validate(t, v, "key.example.test.", 65400)
+	if len(res.Answer.Records[0].RData) != 35 || res.Answer.Records[0].RData[0] != 3 {
+		t.Errorf("TYPE65400 RDATA = %x", res.Answer.Records[0].RData)
+	}
+}
+
 func TestHierarchy_TamperedRRsetIsBogus(t *testing.T) {
 	h := buildHierarchy(t)
 	tampered := &zone.Zone{}
