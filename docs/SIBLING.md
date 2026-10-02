@@ -27,6 +27,11 @@ reference for that feature's behaviour until both sides ship. For example:
   authoritative-DNS client, NSEC / NSEC3 negative-proof primitives,
   CNAME / DNAME chasing, and wildcard-synthesised positive-answer
   support all **originated in `dnsdata-go`** (v0.1.0 – v0.2.0).
+- Later Go-originated features — the DoH client, the verifier cache, the
+  `resolver.Response` shape, RFC 3597 unknown types, the strict reader,
+  canonical output, the zone signer, the in-memory authority and
+  `Result.Answer` (UP-007 – UP-015, v0.1.0 – v0.7.0) — have all landed
+  in `dnsdata-js`; see [`UPSTREAM_FEEDBACK.md`](../UPSTREAM_FEEDBACK.md).
 
 Bug-fix feedback flows both directions (Go ↔ TS) via each repo's
 [`UPSTREAM_FEEDBACK.md`](../UPSTREAM_FEEDBACK.md). The file name is
@@ -41,23 +46,39 @@ sentinel errors ↔ `instanceof` subclasses, `[]byte` ↔ `Uint8Array`,
 
 ## Cross-repo module mapping
 
-Each TS file maps to one Go package (and vice versa) so port-backs are
-mechanical:
+Both sides use the same package directories, so port-backs are
+mechanical. TS paths are relative to `dnsdata-js/packages/core/src/`:
 
-| TS (`dnsdata-js/packages/core/src/lib/`) | Go (`dnsdata-go`) | Notes |
+| TS | Go (`dnsdata-go`) | Notes |
 |---|---|---|
-| `dns_wire.ts` (encode/decode)       | `wire/name.go`             | `domain_name2wire`, `wire2domain_name` |
-| `dns_wire.ts` (`parse_domain_name`) | `wire/name_decompress.go`  | RFC 1035 §4.1.4 compression-pointer decoder |
-| `dns_message.ts`                    | `wire/message.go`          | `parse_message`, `Header`, `Question`, `RawRR`, `RawMessage` |
-| `rdata_decoder.ts`                  | `wire/rdata.go`            | `rdata_to_string`, RFC 3597 fallback |
-| `dns_zone.ts`                       | `zone/rr.go`, `zone/zone.go` | `ResourceRecord`, `Zone`, handler registry |
-| `dnssec_zone.ts`                    | `dnssec/zone.go`           | Chain-of-trust verification helpers, canonical digest target |
-| `dnssec_rr.ts`                      | `dnssec/{dnskey,rrsig,ds,nsec,nsec3}.go` | `DNSKey`, `RRSig`, `DNSRR_DS`, `DNSRR_NSEC`, `DNSRR_NSEC3` |
-| `dnssec_util.ts`                    | `dnssec/canon.go`          | Canonical-name compare + `LabelCount` / `LastNLabels` (UP-004) |
-| `verifier.ts`                       | `verifier/`                | Chain-of-trust walker with pluggable `Resolver` (UP-001, UP-005, UP-006) |
-| `dns_type_table.ts`                 | `types/`                   | RR-type / class / rcode / algorithm tables |
-| `resolver_auth.ts`                  | `resolver/auth/`           | UDP / TCP authoritative-DNS client (UP-003) |
-| `dnssec_key_loader.ts`              | `dnssec/anchors.go`        | Root trust anchors |
+| `types/dns_type_table.ts`, `types/algorithm.ts` | `types/`            | RR-type / class / opcode / rcode / algorithm tables, `TYPE<n>` / `CLASS<n>` (UP-010) |
+| `wire/dns_wire.ts` (encode/decode)       | `wire/name.go`             | `domain_name2wire`, `wire2domain_name` |
+| `wire/dns_wire.ts` (`parse_domain_name`) | `wire/name_decompress.go`  | RFC 1035 §4.1.4 compression-pointer decoder |
+| `wire/dns_wire.ts` (`build_query`)       | `wire/query.go`            | Query builder with EDNS(0) / DO, shared by the DoH and auth clients |
+| `wire/dns_wire_util.ts`                  | `wire/builder.go`          | Wire builder |
+| `wire/dns_message.ts`                    | `wire/message.go`          | `parse_message`, `Header`, `Question`, `RawRR`, `RawMessage` (UP-002) |
+| `wire/rdata_decoder.ts`                  | `wire/rdata.go`            | `rdata_to_string`, RFC 3597 fallback (UP-002) |
+| `zone/dns_zone.ts`                       | `zone/rr.go`, `zone/zone.go` | `ResourceRecord`, `Zone`, handler registry |
+| `zone/generic.ts`                        | `zone/generic.go`          | RFC 3597 `\# <len> <hex>` generic RDATA (UP-010) |
+| `zone/strict.ts`                         | `zone/strict.go`           | Strict master-file reader (UP-011) |
+| `zone/canonical.ts`                      | `zone/canonical.go`        | RFC 4034 §6 canonical order (UP-012) |
+| `zone/handlers.ts`                       | `zone/handlers.go`         | Opt-in handler registration |
+| `zone/rr/*_rr.ts`                        | `zone/{tlsa,sshfp,openpgpkey,cert,uri,hinfo,rp,eui,csync,loc,naptr,svcb}.go` | Extended RR handlers (TLSA / SMIMEA are `dane_rr.ts`) |
+| `zone/rr/opt_rr.ts`                      | `wire/edns.go`             | EDNS(0) OPT codec |
+| `dnssec/dnssec_zone.ts`                  | `dnssec/zone.go`           | Chain-of-trust verification helpers, canonical digest target |
+| `dnssec/{dnskey,rrsig,ds,nsec,nsec3}.ts`, `dnssec/dnssec_rr.ts` | `dnssec/{dnskey,rrsig,ds,nsec,nsec3}.go` | DNSSEC RR handlers, NSEC / NSEC3 proof primitives (UP-004) |
+| `dnssec/dnssec_util.ts`                  | `dnssec/canon.go`          | Canonical-name compare + `LabelCount` / `LastNLabels` (UP-004) |
+| `dnssec/crypto.ts`                       | `dnssec/crypto.go`         | Signature verification (Node `crypto` / Go `crypto/...`) |
+| `dnssec/handlers.ts`                     | `dnssec/handlers.go`       | DNSSEC handler registration |
+| `dnssec/dnssec_key_loader.ts`, `dnssec/root_anchors.ts` | `dnssec/anchors.go` | Root trust anchors |
+| `dnssec/signer/`                         | `dnssec/signer/`           | Key generation / loading, DS, NSEC chain, zone signing (UP-013) |
+| `resolver/response.ts`                   | `resolver/resolver.go`     | `Response { records, ad, rcode }` (UP-009) |
+| `resolver/doh/`                          | `resolver/doh/`            | RFC 8484 DoH client with provider failover (UP-007) |
+| `resolver/auth/`                         | `resolver/auth/`           | UDP / TCP authoritative-DNS client (UP-003) |
+| `resolver/memory/`                       | `resolver/memory/`         | In-memory authority for signed zones (UP-014) |
+| `verifier/`                              | `verifier/`                | Chain-of-trust walker with pluggable `Resolver` (UP-001, UP-005, UP-006), `Cache` (UP-008), `Result.answer` (UP-015) |
+| `dns_exception.ts`                       | per-package `errors.go`    | TS exception hierarchy ↔ Go sentinel errors |
+| `../tests/testdata/`                     | `testdata/`                | Shared vectors (`rdata_roundtrip.json`, `signed/`); byte-identical, generated on the Go side |
 
 ## Drift policy
 
