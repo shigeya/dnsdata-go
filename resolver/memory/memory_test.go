@@ -73,6 +73,8 @@ func TestHierarchy_Verdicts(t *testing.T) {
 		{"name does not exist", "nope.example.test.", types.TypeA, verifier.VerdictSecureNXDomain},
 		{"type does not exist", "www.example.test.", types.TypeMX, verifier.VerdictSecureNoData},
 		{"wildcard expansion", "x.wild.example.test.", types.TypeA, verifier.VerdictSecure},
+		{"wildcard without the type", "x.wild.example.test.", types.TypeTXT, verifier.VerdictSecureNoData},
+		{"empty non-terminal", "wild.example.test.", types.TypeA, verifier.VerdictSecureNoData},
 		{"CNAME followed", "alias.example.test.", types.TypeA, verifier.VerdictSecure},
 		{"unsigned delegation", "www.insecure.test.", types.TypeA, verifier.VerdictInsecure},
 	}

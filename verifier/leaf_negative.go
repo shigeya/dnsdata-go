@@ -8,9 +8,17 @@ import (
 	"github.com/shigeya/dnsdata-go/types"
 )
 
-// proveNoData attempts to prove from zone that qname exists but no
-// rrset of qtype is present (RFC 4035 §5.4 NSEC NODATA, RFC 5155 §8.5
-// NSEC3 NODATA).
+// proveNoData attempts to prove from zone that no rrset of qtype is
+// present at qname although the answer is not NXDOMAIN. Three shapes
+// are accepted, for both NSEC and NSEC3:
+//
+//   - qname exists without qtype (RFC 4035 §5.4, RFC 5155 §8.5);
+//   - qname is an empty non-terminal (with NSEC: a covering NSEC whose
+//     next name is below qname; with NSEC3 the ENT has its own
+//     matching record, so the first shape covers it);
+//   - wildcard NODATA: qname does not exist, and the wildcard at its
+//     closest encloser exists without qtype (RFC 4035 §3.1.3.4,
+//     RFC 5155 §8.7).
 //
 // On success the returned reason names the NSEC / NSEC3 record(s) that
 // produced the proof. Like [Verifier.proveNoDS], every candidate must
@@ -52,73 +60,90 @@ func (v *Verifier) proveNXDomain(z *dnssec.Zone, qname string) (bool, string) {
 // --- NSEC ---------------------------------------------------------------
 
 func (v *Verifier) proveNoDataWithNSEC(z *dnssec.Zone, qname string, qtype uint16) (bool, string) {
-	for _, c := range nsecHandlers(z, qname) {
-		if !c.nsec.MatchesName(c.owner, qname) {
-			continue
-		}
-		if !c.nsec.ProvesNoData(qtype) {
-			continue
-		}
-		ok, err := z.VerifyRRSet(c.owner, types.TypeNSEC, dnssec.KeyModeNone, "")
-		if err != nil || !ok {
-			continue
-		}
+	candidates := nsecHandlers(z, qname)
+	if c := findNSEC(z, candidates, func(c nsecCandidate) bool {
+		return c.nsec.MatchesName(c.owner, qname) && c.nsec.ProvesNoData(qtype)
+	}); c != nil {
 		return true, fmt.Sprintf("NSEC at %s asserts qname exists without %s", c.owner, qtypeMnemonic(qtype))
 	}
-	return false, ""
-}
 
-// proveNXDomainWithNSEC needs a covering NSEC for qname AND a covering
-// (or matching with appropriate bitmap) NSEC for *.<closestEncloser>.
-// The closest encloser is derived from the covering NSEC and qname:
-// the longest ancestor of qname that is also a suffix of either the
-// NSEC's owner or its NextDomain.
-func (v *Verifier) proveNXDomainWithNSEC(z *dnssec.Zone, qname string) (bool, string) {
-	candidates := nsecHandlers(z, qname)
-
-	// 1. Find any NSEC that covers qname.
-	var covering *nsecCandidate
-	for i := range candidates {
-		c := &candidates[i]
-		if !c.nsec.CoversName(c.owner, qname) {
-			continue
-		}
-		ok, err := z.VerifyRRSet(c.owner, types.TypeNSEC, dnssec.KeyModeNone, "")
-		if err != nil || !ok {
-			continue
-		}
-		covering = c
-		break
-	}
+	covering := findNSEC(z, candidates, func(c nsecCandidate) bool {
+		return c.nsec.CoversName(c.owner, qname)
+	})
 	if covering == nil {
 		return false, ""
 	}
+	if isStrictSubdomain(covering.nsec.NextDomain, qname) {
+		return true, fmt.Sprintf("NSEC at %s covers empty non-terminal %s (next name %s is below it)",
+			covering.owner, qname, covering.nsec.NextDomain)
+	}
 
-	// 2. Compute the closest encloser candidate: longest ancestor of
-	//    qname that is also an ancestor of the covering NSEC's owner
-	//    or NextDomain. Both endpoints exist in the zone so any
-	//    common ancestor with qname is also a name that exists.
 	ce := closestEncloserNSEC(qname, covering.owner, covering.nsec.NextDomain)
 	if ce == "" {
 		return false, ""
 	}
-	wildcard := "*." + ce
-
-	// 3. Find an NSEC that either covers *.<ce> (wildcard doesn't
-	//    exist) or matches it with a bitmap proving NODATA for any
-	//    qtype — but since qname is NXDOMAIN we only care that the
-	//    wildcard itself doesn't exist as an answer name.
-	for _, c := range candidates {
-		if c.nsec.CoversName(c.owner, wildcard) || c.nsec.MatchesName(c.owner, wildcard) {
-			ok, err := z.VerifyRRSet(c.owner, types.TypeNSEC, dnssec.KeyModeNone, "")
-			if err != nil || !ok {
-				continue
-			}
-			return true, fmt.Sprintf("NSEC at %s covers %s, NSEC at %s denies wildcard %s",
-				covering.owner, qname, c.owner, wildcard)
-		}
+	wildcard := wildcardAt(ce)
+	match := findNSEC(z, candidates, func(c nsecCandidate) bool {
+		return c.nsec.MatchesName(c.owner, wildcard) && c.nsec.ProvesNoData(qtype)
+	})
+	if match == nil {
+		return false, ""
 	}
-	return false, ""
+	return true, fmt.Sprintf("NSEC at %s covers %s, NSEC at %s asserts wildcard %s exists without %s",
+		covering.owner, qname, match.owner, wildcard, qtypeMnemonic(qtype))
+}
+
+// proveNXDomainWithNSEC needs a covering NSEC for qname AND a covering
+// NSEC for *.<closestEncloser>. The closest encloser is derived from
+// the covering NSEC and qname: the longest ancestor of qname that is
+// also a suffix of either the NSEC's owner or its NextDomain.
+//
+// A covering NSEC whose next name is below qname proves qname is an
+// empty non-terminal, and an NSEC matching the wildcard proves the
+// wildcard exists; neither is NXDOMAIN.
+func (v *Verifier) proveNXDomainWithNSEC(z *dnssec.Zone, qname string) (bool, string) {
+	candidates := nsecHandlers(z, qname)
+
+	covering := findNSEC(z, candidates, func(c nsecCandidate) bool {
+		return c.nsec.CoversName(c.owner, qname)
+	})
+	if covering == nil || isStrictSubdomain(covering.nsec.NextDomain, qname) {
+		return false, ""
+	}
+
+	// Both endpoints of the covering NSEC exist in the zone, so any
+	// common ancestor with qname is also a name that exists.
+	ce := closestEncloserNSEC(qname, covering.owner, covering.nsec.NextDomain)
+	if ce == "" || dnssec.EqualCanonicalNames(ce, qname) {
+		return false, ""
+	}
+	wildcard := wildcardAt(ce)
+
+	denial := findNSEC(z, candidates, func(c nsecCandidate) bool {
+		return c.nsec.CoversName(c.owner, wildcard)
+	})
+	if denial == nil {
+		return false, ""
+	}
+	return true, fmt.Sprintf("NSEC at %s covers %s, NSEC at %s denies wildcard %s",
+		covering.owner, qname, denial.owner, wildcard)
+}
+
+// findNSEC returns the first candidate that satisfies pred and whose
+// signature verifies under z's keys, or nil.
+func findNSEC(z *dnssec.Zone, candidates []nsecCandidate, pred func(nsecCandidate) bool) *nsecCandidate {
+	for i := range candidates {
+		c := &candidates[i]
+		if !pred(*c) {
+			continue
+		}
+		ok, err := z.VerifyRRSet(c.owner, types.TypeNSEC, dnssec.KeyModeNone, "")
+		if err != nil || !ok {
+			continue
+		}
+		return c
+	}
+	return nil
 }
 
 // closestEncloserNSEC returns the longest name that is a suffix of
@@ -158,6 +183,21 @@ func (v *Verifier) proveNoDataWithNSEC3(z *dnssec.Zone, qname string, qtype uint
 		}
 		return true, fmt.Sprintf("NSEC3 at %s asserts qname exists without %s", c.owner, qtypeMnemonic(qtype))
 	}
+
+	// Wildcard NODATA (RFC 5155 §8.7): closest-encloser proof plus an
+	// NSEC3 matching *.<ce> whose bitmap lacks qtype.
+	proof, ok := v.closestEncloserProofNSEC3(z, candidates, qname)
+	if !ok {
+		return false, ""
+	}
+	wildcard := wildcardAt(proof.ce)
+	for _, c := range candidates {
+		if !v.nsec3Matches(z, c, wildcard) || !c.h.ProvesNoData(qtype) {
+			continue
+		}
+		return true, fmt.Sprintf("%s; NSEC3 at %s asserts wildcard %s exists without %s",
+			proof, c.owner, wildcard, qtypeMnemonic(qtype))
+	}
 	return false, ""
 }
 
@@ -166,63 +206,72 @@ func (v *Verifier) proveNoDataWithNSEC3(z *dnssec.Zone, qname string, qtype uint
 // and wildcard cover.
 func (v *Verifier) proveNXDomainWithNSEC3(z *dnssec.Zone, qname string) (bool, string) {
 	candidates := nsec3Handlers(z)
-	if len(candidates) == 0 {
-		return false, ""
-	}
-
-	// Walk ancestors of qname from longest to shortest. The first
-	// ancestor whose hash matches some NSEC3's owner-hash is the
-	// closest encloser.
-	ancestors := ancestorsOf(qname)
-	var ce string
-	var ceCandidate *nsec3Candidate
-	for _, a := range ancestors {
-		for i := range candidates {
-			c := &candidates[i]
-			target, err := dnssec.ComputeNSEC3Hash(a, c.h.HashAlgorithm, c.h.Iterations, c.h.Salt)
-			if err != nil {
-				continue
-			}
-			if !bytesEqual(target, c.ownerHash) {
-				continue
-			}
-			ok, err := z.VerifyRRSet(c.owner, types.TypeNSEC3, dnssec.KeyModeNone, "")
-			if err != nil || !ok {
-				continue
-			}
-			ce = a
-			ceCandidate = c
-			break
-		}
-		if ce != "" {
-			break
-		}
-	}
-	if ce == "" || ce == qname {
-		// qname itself matches → not an NXDOMAIN case (would be
-		// NODATA), or no ancestor matched.
-		return false, ""
-	}
-
-	// next-closer name: ce with one more label from qname prepended.
-	nc := nextCloserName(qname, ce)
-	if nc == "" {
-		return false, ""
-	}
-	ncProven, ncRec := v.findCoveringNSEC3(z, candidates, nc)
-	if !ncProven {
+	proof, ok := v.closestEncloserProofNSEC3(z, candidates, qname)
+	if !ok {
 		return false, ""
 	}
 
 	// wildcard: "*." + ce. Must be covered by some NSEC3.
-	wildcard := "*." + ce
+	wildcard := wildcardAt(proof.ce)
 	wcProven, wcRec := v.findCoveringNSEC3(z, candidates, wildcard)
 	if !wcProven {
 		return false, ""
 	}
+	return true, fmt.Sprintf("%s; %s covers wildcard %s", proof, wcRec, wildcard)
+}
 
-	return true, fmt.Sprintf("NSEC3 at %s matches closest encloser %s; %s covers next-closer %s; %s covers wildcard %s",
-		ceCandidate.owner, ce, ncRec, nc, wcRec, wildcard)
+// nsec3CEProof is a verified RFC 5155 §8.3 closest-encloser proof.
+type nsec3CEProof struct {
+	ce, ceOwner string // closest encloser and the NSEC3 matching it
+	nc, ncOwner string // next closer name and the NSEC3 covering it
+}
+
+func (p nsec3CEProof) String() string {
+	return fmt.Sprintf("NSEC3 at %s matches closest encloser %s; %s covers next-closer %s",
+		p.ceOwner, p.ce, p.ncOwner, p.nc)
+}
+
+// closestEncloserProofNSEC3 finds the closest encloser of qname (the
+// longest proper ancestor with a matching NSEC3) and an NSEC3 covering
+// the next closer name. ok is false when qname itself matches (not a
+// non-existence case) or either half of the proof is missing.
+func (v *Verifier) closestEncloserProofNSEC3(z *dnssec.Zone, candidates []nsec3Candidate, qname string) (nsec3CEProof, bool) {
+	var proof nsec3CEProof
+	for _, a := range ancestorsOf(qname) {
+		for _, c := range candidates {
+			if v.nsec3Matches(z, c, a) {
+				proof.ce, proof.ceOwner = a, c.owner
+				break
+			}
+		}
+		if proof.ce != "" {
+			break
+		}
+	}
+	if proof.ce == "" || dnssec.EqualCanonicalNames(proof.ce, qname) {
+		return proof, false
+	}
+	proof.nc = nextCloserName(qname, proof.ce)
+	if proof.nc == "" {
+		return proof, false
+	}
+	covered, owner := v.findCoveringNSEC3(z, candidates, proof.nc)
+	if !covered {
+		return proof, false
+	}
+	proof.ncOwner = owner
+	return proof, true
+}
+
+// nsec3Matches reports whether c's owner hash equals H(name) under c's
+// own parameters and c verifies under z's keys.
+func (v *Verifier) nsec3Matches(z *dnssec.Zone, c nsec3Candidate, name string) bool {
+	h, err := dnssec.ComputeNSEC3Hash(name, c.h.HashAlgorithm, c.h.Iterations, c.h.Salt)
+	if err != nil || !bytesEqual(h, c.ownerHash) {
+		return false
+	}
+	ok, err := z.VerifyRRSet(c.owner, types.TypeNSEC3, dnssec.KeyModeNone, "")
+	return err == nil && ok
 }
 
 // findCoveringNSEC3 returns (true, ownerName) if any NSEC3 in cands
@@ -279,6 +328,25 @@ func nextCloserName(qname, ce string) string {
 		}
 	}
 	return ""
+}
+
+// wildcardAt returns the wildcard name directly below ce.
+func wildcardAt(ce string) string {
+	if ce == "." {
+		return "*."
+	}
+	return "*." + ce
+}
+
+// isStrictSubdomain reports whether name is below (not equal to)
+// parent.
+func isStrictSubdomain(name, parent string) bool {
+	nl := canonLabelsTrim(name)
+	pl := canonLabelsTrim(parent)
+	if len(nl) <= len(pl) {
+		return false
+	}
+	return dnssec.EqualCanonicalNames(longestCommonAncestor(name, parent), parent)
 }
 
 // longestCommonAncestor returns the longest name that is a suffix of
