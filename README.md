@@ -18,26 +18,40 @@ parallel — see [`docs/SIBLING.md`](docs/SIBLING.md). Both descend from
 
 ## Status
 
-v0.3.1 — full end-to-end DNSSEC chain validation with NSEC / NSEC3
+v0.7.0 — full end-to-end DNSSEC chain validation with NSEC / NSEC3
 negative-proof support, CNAME / DNAME chasing, and wildcard-synthesised
 positive answer validation. Both DoH and plain UDP / TCP transports.
 The default DoH provider order is **Cloudflare → Google → Quad9**
-(see `resolver/doh` package doc for the rationale). v0.3.0 added the
-P9 RR handler set (TLSA, SMIMEA, SSHFP, OPENPGPKEY, CERT, URI, HINFO,
-RP, EUI48, EUI64, CSYNC, LOC, NAPTR, SVCB, HTTPS) plus an EDNS(0) OPT
-codec — all reachable through the opt-in `zone.RegisterHandlers()`
-entrypoint. Pre-release: API surface may still change before v1.0.
-Primary consumer is
+(see `resolver/doh` package doc for the rationale). Pre-release: API
+surface may still change before v1.0. Primary consumer is
 [`mailsec-probe`](https://github.com/shigeya/mailsec-probe) Phase 3.0;
-co-designed with that consumer.
+co-designed with that consumer. See [`CHANGELOG.md`](CHANGELOG.md) for
+per-release detail.
 
-`Verdict` is six-state: `secure | secure-nodata | secure-nxdomain |
-insecure | bogus | indeterminate`. `Result` additionally exposes
-`Aliases` (CNAME / DNAME hops) and `Wildcard` (synthesis evidence)
-when applicable.
+- **Validation.** `Verdict` is six-state: `secure | secure-nodata |
+  secure-nxdomain | insecure | bogus | indeterminate`. `Result`
+  additionally exposes `Aliases` (CNAME / DNAME hops), `Wildcard`
+  (synthesis evidence) and, for Secure results, `Answer` (the validated
+  RRset and the RRSIGs that verified it). RRSIG validity windows are
+  enforced against the verifier's clock (`WithClock`).
+- **Resolvers.** `resolver/doh` and `resolver/auth` return
+  `resolver.Response{Records, AD, RCode}`. An optional `Cache`
+  (`WithCache`, built-in `MemoryCache`) lets a batch run reuse root and
+  TLD DNSKEY / DS rrsets.
+- **Zones.** Master-file reader (lenient `ReadString` and strict
+  `ReadStringStrict`), RFC 4034 §6 canonical output, RFC 3597 unknown
+  types (`TYPE<n>`, `\# <len> <hex>`), and the extended RR handler set
+  (TLSA, SMIMEA, SSHFP, OPENPGPKEY, CERT, URI, HINFO, RP, EUI48, EUI64,
+  CSYNC, LOC, NAPTR, SVCB, HTTPS) plus an EDNS(0) OPT codec, reachable
+  through the opt-in `zone.RegisterHandlers()` entrypoint.
+- **Signing and offline validation.** `dnssec/signer` generates and
+  loads keys, derives DS / trust anchors, builds the NSEC chain and
+  signs a zone; `resolver/memory` serves signed zones as a
+  `verifier.Resolver`, so a private root can be validated without the
+  network.
 
-Out of scope for v0.3.x (tracked in `verifier/doc.go`): RFC 5011
-trust-anchor rollover, DNSKEY / DS rrset caching.
+Out of scope (tracked in `verifier/doc.go`): RFC 5011 trust-anchor
+rollover.
 
 ## Layout
 
@@ -45,11 +59,14 @@ trust-anchor rollover, DNSKEY / DS rrset caching.
 |---|---|
 | `types/` | RR type / class / opcode / rcode / DNSSEC algorithm enums + string conversion |
 | `wire/` | DNS wire-format codec — names (with compression), builder, message parser, per-type RDATA → presentation, query builder |
-| `zone/` | zone file parser, `ResourceRecord` with pluggable RR-type handlers |
+| `zone/` | zone file parser (lenient and strict), canonical output, `ResourceRecord` with pluggable RR-type handlers, RFC 3597 generic RDATA |
 | `dnssec/` | DNSKEY / RRSIG / DS / NSEC / NSEC3 / NSEC3PARAM handlers, root trust anchors, chain operations |
+| `dnssec/signer/` | key generation and loading, DS / trust-anchor derivation, NSEC chain, zone signing |
+| `resolver/` | `Response{Records, AD, RCode}` shared by the clients below |
 | `resolver/doh/` | RFC 8484 DoH client with Cloudflare / Google / Quad9 sequential failover |
 | `resolver/auth/` | UDP / TCP plain-DNS client with TC fallback and multi-server failover |
-| `verifier/` | DNSSEC chain-of-trust walker (`Validate(ctx, qname, qtype) → *Result`) |
+| `resolver/memory/` | in-memory authority for signed zones, usable as `verifier.Resolver`, with fault injection |
+| `verifier/` | DNSSEC chain-of-trust walker (`Validate(ctx, qname, qtype) → *Result`), optional `Cache` |
 
 ## Quick start
 
