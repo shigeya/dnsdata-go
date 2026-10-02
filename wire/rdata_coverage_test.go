@@ -52,6 +52,20 @@ func TestRDataToString_TXT(t *testing.T) {
 	}
 }
 
+// UTF-8 octets pass through unchanged, a leading BOM included. Same
+// bytes and expected string as the "TXT UTF-8 with BOM" shared vector
+// and its dnsdata-js test.
+func TestRDataToString_TXTUTF8(t *testing.T) {
+	rdata := []byte{9, 'c', 'a', 'f', 0xc3, 0xa9, ' ', 0xe2, 0x9c, 0x93, 4, 0xef, 0xbb, 0xbf, 'A'}
+	got, err := wire.RDataToString(nil, types.TypeTXT, rdata, 0)
+	if err != nil {
+		t.Fatalf("RDataToString: %v", err)
+	}
+	if want := "\"caf\xc3\xa9 \xe2\x9c\x93\" \"\xef\xbb\xbfA\""; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
 func TestRDataToString_SOA(t *testing.T) {
 	mname, _ := wire.DomainNameToWire("ns1.example.com.")
 	rname, _ := wire.DomainNameToWire("hostmaster.example.com.")
