@@ -256,16 +256,18 @@ func (v *Verifier) resolveLeaf(ctx context.Context, currentZone *dnssec.Zone, cu
 	}
 
 	// Resolver placed records into currentZone but none matched
-	// qtype. Look for an alias before declaring NODATA.
-	if alias, hop, err := v.tryCNAME(currentZone, currentName, qname); err != nil {
+	// qtype. Look for an alias before declaring NODATA. DNAME goes
+	// first: a DNAME answer also carries the CNAME synthesised from
+	// it, and that CNAME has no RRSIG of its own (RFC 6672 §5.3.1), so
+	// trying CNAME first would report the signed DNAME as Bogus. The
+	// target is derived from the DNAME; the synthesised CNAME is not
+	// used.
+	if _, hop, err := v.tryDNAME(currentZone, currentName, qname); err != nil {
 		return nil, err
 	} else if hop != nil {
 		return hop, nil
-	} else if alias != nil {
-		// alias != nil but hop == nil should not happen; defensive.
-		_ = alias
 	}
-	if _, hop, err := v.tryDNAME(currentZone, currentName, qname); err != nil {
+	if _, hop, err := v.tryCNAME(currentZone, currentName, qname); err != nil {
 		return nil, err
 	} else if hop != nil {
 		return hop, nil
@@ -439,7 +441,7 @@ func (v *Verifier) validateRoot(ctx context.Context, result *Result) (*dnssec.Zo
 func (v *Verifier) loadRecords(ctx context.Context, z *dnssec.Zone, name string, qtype uint16, result *Result) (int, error) {
 	if v.cache != nil {
 		if cached, ok := v.cache.Get(name, qtype); ok {
-			return v.applyRecords(cached, z, qtype, result), nil
+			return v.applyRecords(cached, z, name, qtype, result), nil
 		}
 	}
 	resp, err := v.resolver.Query(ctx, name, qtype)
@@ -460,14 +462,19 @@ func (v *Verifier) loadRecords(ctx context.Context, z *dnssec.Zone, name string,
 	if v.cache != nil {
 		v.cache.Put(name, qtype, resp.Records)
 	}
-	return v.applyRecords(resp.Records, z, qtype, result), nil
+	return v.applyRecords(resp.Records, z, name, qtype, result), nil
 }
 
 // applyRecords appends each record to z, updates result.Evidence for
-// the DNSSEC-bookkeeping types, and returns the count of records
-// matching qtype. Shared by the resolver-miss and cache-hit paths so
-// the two produce indistinguishable bookkeeping.
-func (v *Verifier) applyRecords(records []*zone.ResourceRecord, z *dnssec.Zone, qtype uint16, result *Result) int {
+// the DNSSEC-bookkeeping types, and returns the count of records of
+// type qtype owned by name. Shared by the resolver-miss and cache-hit
+// paths so the two produce indistinguishable bookkeeping.
+//
+// The owner check matters for recursive resolvers: they follow a CNAME
+// or DNAME themselves and put the target's rrset (same type, different
+// owner) into the same answer. Counting those would make the caller
+// look for a qname rrset that is not there.
+func (v *Verifier) applyRecords(records []*zone.ResourceRecord, z *dnssec.Zone, name string, qtype uint16, result *Result) int {
 	count := 0
 	for _, rr := range records {
 		z.AddRR(rr)
@@ -480,7 +487,7 @@ func (v *Verifier) applyRecords(records []*zone.ResourceRecord, z *dnssec.Zone, 
 			key := rr.Label + "/" + qtypeMnemonic(qtype)
 			result.Evidence.RRSIGs[key] = append(result.Evidence.RRSIGs[key], rr.Value)
 		}
-		if rr.Type == qtype {
+		if rr.Type == qtype && dnssec.EqualCanonicalNames(rr.Label, name) {
 			count++
 		}
 	}
