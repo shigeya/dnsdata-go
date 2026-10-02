@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/shigeya/dnsdata-go/dnssec"
+	"github.com/shigeya/dnsdata-go/zone"
 )
 
 // Verifier is the chain-of-trust walker. Construct with [NewVerifier].
@@ -57,10 +58,13 @@ func WithCache(c Cache) Option {
 // resolver is required.
 //
 // As a deliberate constructor-time side effect this also calls
-// [dnssec.RegisterHandlers] so that the [zone.ResourceRecord] objects
-// returned by the resolver materialise their DNSSEC handlers when
-// the chain walker calls Handler(). DESIGN.md §4.21 forbids init()
-// side effects but explicit construction is fine.
+// [zone.RegisterHandlers] and [dnssec.RegisterHandlers] so that the
+// [zone.ResourceRecord] objects returned by the resolver materialise
+// their handlers when the chain walker calls Handler(): the DNSSEC
+// records themselves, and every answer whose presentation form only a
+// zone handler encodes (TLSA, SMIMEA, SVCB, HTTPS, …), whose RRSIG
+// cannot be checked otherwise. DESIGN.md §4.21 forbids init() side
+// effects but explicit construction is fine.
 func NewVerifier(opts ...Option) (*Verifier, error) {
 	v := &Verifier{
 		anchors: dnssec.BuiltinRootAnchors(),
@@ -72,6 +76,7 @@ func NewVerifier(opts ...Option) (*Verifier, error) {
 	if v.resolver == nil {
 		return nil, fmt.Errorf("%w: WithResolver is required", ErrConfig)
 	}
+	zone.RegisterHandlers()
 	dnssec.RegisterHandlers()
 	return v, nil
 }

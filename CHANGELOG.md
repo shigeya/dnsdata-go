@@ -79,6 +79,14 @@ this project adheres to [Semantic Versioning](https://semver.org/).
   a wildcard CNAME is synthesised for queries of any type (RFC 4592
   §3.3.3), not only CNAME; and a DNAME answer carries the unsigned
   CNAME synthesised from it (RFC 6672 §5.3.1).
+- `verifier.NewVerifier` registers the zone handlers
+  (`zone.RegisterHandlers`) as well as the DNSSEC ones, as the signer
+  does. A TLSA, SMIMEA, SVCB or HTTPS answer received in presentation
+  form, which the DoH / auth / DoT clients produce since TLSA / SVCB
+  RDATA is presented by type, could not be encoded to check its RRSIG
+  unless the caller had registered them, and validation ended
+  `indeterminate` ("no encoder"). Shared vector `testdata/handlers` in
+  `verifier/`.
 
 ## [0.7.0] — 2026-09-24
 
