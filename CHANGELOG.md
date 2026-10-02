@@ -24,9 +24,20 @@ this project adheres to [Semantic Versioning](https://semver.org/).
   answer and wildcard NODATA, and the referral to a delegation without
   DS, by the matching NSEC3 or, under opt-out, the closest provable
   encloser proof.
+- `resolver/dot`: a DNS-over-TLS client (RFC 7858) with the shape of
+  the auth and DoH clients: `NewClient`, `WithServers` (port 853 by
+  default), `WithTLSConfig`, `WithTimeout`, `WithCheckingDisabled`,
+  `Query`, `QueryRaw`, and `Resolve` returning a `resolver.Response`.
+  The server is authenticated as in RFC 8310 strict privacy (trusted
+  root, matching name or address, TLS 1.2 or later). One connection
+  per query.
 
 ### Changed
 
+- `resolver/auth` writes the TCP length prefix and the query in one
+  write (RFC 7766 §8), sharing the framing with `resolver/dot`. The
+  auth, DoH and DoT clients share the conversion of a response into a
+  `resolver.Response`; results and errors are unchanged.
 - TXT character-strings and the CAA value use RFC 1035 §5.1 escapes in
   both directions. `RDataToString` writes octets that are neither
   printable ASCII nor part of valid UTF-8 as `\DDD` (control characters

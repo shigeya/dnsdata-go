@@ -5,10 +5,10 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"time"
 
+	"github.com/shigeya/dnsdata-go/resolver/internal/stream"
 	"github.com/shigeya/dnsdata-go/wire"
 )
 
@@ -207,7 +207,7 @@ func (c *Client) queryUDP(ctx context.Context, addr string, queryID uint16, quer
 }
 
 // queryTCP sends query over TCP using the RFC 1035 §4.2.2 length-
-// prefixed framing.
+// prefixed framing ([stream.Exchange], shared with resolver/dot).
 func (c *Client) queryTCP(ctx context.Context, addr string, queryID uint16, query []byte) ([]byte, error) {
 	deadline := time.Now().Add(c.timeout)
 	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
@@ -223,25 +223,9 @@ func (c *Client) queryTCP(ctx context.Context, addr string, queryID uint16, quer
 		return nil, fmt.Errorf("%w: tcp deadline: %v", ErrAuth, err)
 	}
 
-	// Length prefix + query.
-	prefix := make([]byte, 2)
-	binary.BigEndian.PutUint16(prefix, uint16(len(query)))
-	if _, err := conn.Write(prefix); err != nil {
-		return nil, fmt.Errorf("%w: tcp write prefix: %v", ErrAuth, err)
-	}
-	if _, err := conn.Write(query); err != nil {
-		return nil, fmt.Errorf("%w: tcp write query: %v", ErrAuth, err)
-	}
-
-	// Read length-prefixed response.
-	hdr := make([]byte, 2)
-	if _, err := io.ReadFull(conn, hdr); err != nil {
-		return nil, fmt.Errorf("%w: tcp read prefix: %v", ErrAuth, err)
-	}
-	respLen := binary.BigEndian.Uint16(hdr)
-	resp := make([]byte, respLen)
-	if _, err := io.ReadFull(conn, resp); err != nil {
-		return nil, fmt.Errorf("%w: tcp read body: %v", ErrAuth, err)
+	resp, err := stream.Exchange(conn, query)
+	if err != nil {
+		return nil, fmt.Errorf("%w: tcp %s: %v", ErrAuth, addr, err)
 	}
 	if err := validateResponse(resp, queryID); err != nil {
 		return nil, err

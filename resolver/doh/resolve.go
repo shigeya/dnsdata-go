@@ -6,8 +6,7 @@ import (
 	"fmt"
 
 	"github.com/shigeya/dnsdata-go/resolver"
-	"github.com/shigeya/dnsdata-go/wire"
-	"github.com/shigeya/dnsdata-go/zone"
+	"github.com/shigeya/dnsdata-go/resolver/internal/message"
 )
 
 // ErrResolverResponse classifies failures returned by [Client.Resolve]
@@ -36,41 +35,9 @@ func (c *Client) Resolve(ctx context.Context, name string, qtype uint16) (resolv
 	if err != nil {
 		return resolver.Response{}, err
 	}
-	msg, err := wire.ParseMessage(raw)
+	resp, err := message.ToResponse(raw)
 	if err != nil {
 		return resolver.Response{}, fmt.Errorf("%w: %v", ErrResolverResponse, err)
 	}
-
-	out := resolver.Response{
-		AD:      msg.Header.AD(),
-		RCode:   msg.Header.RCode(),
-		Records: make([]*zone.ResourceRecord, 0, len(msg.Answer)+len(msg.Authority)),
-	}
-	for _, rr := range msg.Answer {
-		rec, err := rawRRToResourceRecord(msg.Raw, rr)
-		if err != nil {
-			return resolver.Response{}, err
-		}
-		out.Records = append(out.Records, rec)
-	}
-	for _, rr := range msg.Authority {
-		rec, err := rawRRToResourceRecord(msg.Raw, rr)
-		if err != nil {
-			return resolver.Response{}, err
-		}
-		out.Records = append(out.Records, rec)
-	}
-	return out, nil
-}
-
-func rawRRToResourceRecord(raw []byte, rr wire.RawRR) (*zone.ResourceRecord, error) {
-	value, err := wire.RDataToString(raw, rr.Type, rr.RData, rr.RDataStart)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrResolverResponse, err)
-	}
-	rec, err := zone.NewResourceRecord(rr.Name, rr.TTL, rr.Class, rr.Type, value)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrResolverResponse, err)
-	}
-	return rec, nil
+	return resp, nil
 }
