@@ -44,7 +44,7 @@ DESIGN.md change.
 | [UF-004](#uf-004) | `ResourceRecord.get_wire_body` silently emits nothing when RDATA parse fails | `dns_zone.ts:175-295` | robustness | [fixed-upstream (#15)](https://github.com/shigeya/dnsdata-js/pull/15) |
 | [UF-005](#uf-005) | RRSIG digest target sorts RRset members with their RDLENGTH prefix and keeps duplicates; RFC 4034 §6.3 orders by RDATA alone and removes duplicates | `dnssec/dnssec_zone.ts:98-105` | bug | fixed-upstream (dnsdata-js `4dffc7a`) |
 | [UF-006](#uf-006) | RRSIG inception / expiration never checked; an expired signature validates | `dnssec/dnssec_zone.ts`, `verifier/` | bug | fixed-upstream (dnsdata-js `4dffc7a`) |
-| [UF-007](#uf-007) | DNAME answers and alias answers from recursive resolvers are Bogus; wildcard NODATA and empty non-terminals are not proven as NODATA | `verifier/chain.ts:272,363`, `verifier/leaf_negative.ts` | bug | pending |
+| [UF-007](#uf-007) | DNAME answers and alias answers from recursive resolvers are Bogus; wildcard NODATA and empty non-terminals are not proven as NODATA | `verifier/chain.ts:272,363`, `verifier/leaf_negative.ts` | bug | fixed-upstream (dnsdata-js `110e51e`) |
 
 UF status legend:
 
@@ -292,7 +292,7 @@ The same section requires duplicate RRs to be removed. Without that, an RRset th
 
 **Recommended TS fix.** Mirror the Go change in `chain.ts` (swap `try_cname` / `try_dname`, compare the owner in the count) and `leaf_negative.ts`, and port the tests.
 
-**Tracking:** pending.
+**Tracking:** fixed-upstream in dnsdata-js `110e51e` (`resolve_leaf`, `apply_records`, `leaf_negative.ts`; tests `tests/verifier/verifier_shapes.spec.ts` and two rows in `tests/resolver/memory/hierarchy.spec.ts`).
 
 ---
 
