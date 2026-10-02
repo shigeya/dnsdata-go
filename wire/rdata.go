@@ -9,6 +9,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/shigeya/dnsdata-go/types"
 )
@@ -129,17 +130,33 @@ func decodeTXT(rdata []byte) (string, error) {
 	return strings.Join(parts, " "), nil
 }
 
-// txtQuote wraps s in double quotes, escaping internal `"` and `\`.
+// txtQuote writes s as a quoted RFC 1035 §5.1 <character-string>: `"`
+// and `\` are backslash-escaped, printable ASCII and valid UTF-8 are
+// kept as they are, and every other octet is written as \DDD.
 func txtQuote(s []byte) string {
 	var b strings.Builder
 	b.WriteByte('"')
-	for _, c := range s {
-		switch c {
-		case '"', '\\':
+	for i := 0; i < len(s); {
+		c := s[i]
+		switch {
+		case c == '"' || c == '\\':
 			b.WriteByte('\\')
 			b.WriteByte(c)
-		default:
+			i++
+		case c >= 0x20 && c < 0x7f:
 			b.WriteByte(c)
+			i++
+		case c >= utf8.RuneSelf:
+			if r, size := utf8.DecodeRune(s[i:]); r != utf8.RuneError || size > 1 {
+				b.Write(s[i : i+size])
+				i += size
+				continue
+			}
+			fmt.Fprintf(&b, "\\%03d", c)
+			i++
+		default:
+			fmt.Fprintf(&b, "\\%03d", c)
+			i++
 		}
 	}
 	b.WriteByte('"')
@@ -191,7 +208,7 @@ func decodeCAA(rdata []byte) (string, error) {
 	}
 	tag := string(rdata[2 : 2+tagLen])
 	value := rdata[2+tagLen:]
-	return fmt.Sprintf("%d %s %q", flags, tag, value), nil
+	return fmt.Sprintf("%d %s %s", flags, tag, txtQuote(value)), nil
 }
 
 func decodeDNSKEY(rdata []byte) (string, error) {

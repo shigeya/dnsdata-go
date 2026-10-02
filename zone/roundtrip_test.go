@@ -202,6 +202,33 @@ func TestTXTStrings(t *testing.T) {
 	}
 }
 
+// RFC 1035 §5.1 escapes in TXT presentation: \DDD is one octet, \X is X,
+// in quoted strings and bare tokens alike. \DDD above 255 is an error.
+func TestTXTStringsEscapes(t *testing.T) {
+	rr, err := zone.NewResourceRecord("example.", 60, "IN", "TXT", `"\065\"x\255" b\032c`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := rr.TXTStrings()
+	if err != nil {
+		t.Fatalf("TXTStrings: %v", err)
+	}
+	if len(got) != 2 || got[0] != "A\"x\xff" || got[1] != "b c" {
+		t.Errorf("TXTStrings = %q", got)
+	}
+	over, err := zone.NewResourceRecord("example.", 60, "IN", "TXT", `"\256"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := over.TXTStrings(); err == nil {
+		t.Error(`TXTStrings("\256"): want error`)
+	}
+	var b wire.Builder
+	if err := over.WireBody(&b); err == nil {
+		t.Error(`WireBody("\256"): want error`)
+	}
+}
+
 func TestNewResourceRecordFromRData_TooLong(t *testing.T) {
 	if _, err := zone.NewResourceRecordFromRData("x.", 0, types.ClassIN, 65400, make([]byte, 0x10000)); err == nil {
 		t.Error("want error for RDATA over 65535 octets")

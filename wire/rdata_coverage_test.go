@@ -66,6 +66,35 @@ func TestRDataToString_TXTUTF8(t *testing.T) {
 	}
 }
 
+// RFC 1035 §5.1: octets outside printable ASCII that are not part of
+// valid UTF-8 are \DDD; `"` and `\` are backslash-escaped. TXT strings
+// and the CAA value share the form. Same bytes and expected strings as
+// the shared vectors and their dnsdata-js tests.
+func TestRDataToString_CharacterStringEscapes(t *testing.T) {
+	cases := []struct {
+		name  string
+		qtype uint16
+		rdata []byte
+		want  string
+	}{
+		{"TXT", types.TypeTXT, []byte{7, 'A', 0x01, 0xff, 0x0a, 0x7f, 0xc3, 0xa9},
+			`"A\001\255\010\127` + "\xc3\xa9" + `"`},
+		{"CAA", types.TypeCAA, []byte{0, 5, 'i', 's', 's', 'u', 'e', 'c', 'a', 0xc3, 0xa9, '"', '\\', 0xff},
+			`0 issue "ca` + "\xc3\xa9" + `\"\\\255"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := wire.RDataToString(nil, tc.qtype, tc.rdata, 0)
+			if err != nil {
+				t.Fatalf("RDataToString: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestRDataToString_SOA(t *testing.T) {
 	mname, _ := wire.DomainNameToWire("ns1.example.com.")
 	rname, _ := wire.DomainNameToWire("hostmaster.example.com.")

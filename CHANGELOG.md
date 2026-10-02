@@ -6,6 +6,18 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- TXT character-strings and the CAA value use RFC 1035 §5.1 escapes in
+  both directions. `RDataToString` writes octets that are neither
+  printable ASCII nor part of valid UTF-8 as `\DDD` (control characters
+  included) instead of raw; the CAA value is quoted the same way
+  instead of with Go's `%q` (`\xff`, `\n`). Reading a TXT or CAA value,
+  `\DDD` is one octet and `\X` is `X`, in quoted strings and bare tokens;
+  previously `\065` read as `065`. A `\DDD` above 255 is an error. A
+  CAA value with escaped quotes now round-trips. Shared vectors
+  "TXT control and invalid UTF-8" and "CAA non-ASCII and escapes".
+
 ### Fixed
 
 - DNAME answers validate. The leaf step tried CNAME before DNAME, and

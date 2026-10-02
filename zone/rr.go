@@ -342,8 +342,10 @@ func writeWireSRV(b *wire.Builder, value string) error {
 	return nil
 }
 
-var caaRE = regexp.MustCompile(`^(\d+)\s+(\S+)\s+"([^"]*)"`)
+var caaRE = regexp.MustCompile(`^(\d+)\s+(\S+)\s+(.*)$`)
 
+// writeWireCAA encodes "<flags> <tag> <value>"; the value is one
+// character-string, quoted or bare, with the same escapes as TXT.
 func writeWireCAA(b *wire.Builder, value string) error {
 	m := caaRE.FindStringSubmatch(value)
 	if m == nil {
@@ -351,7 +353,14 @@ func writeWireCAA(b *wire.Builder, value string) error {
 	}
 	flags, _ := strconv.ParseUint(m[1], 10, 8)
 	tag := []byte(m[2])
-	val := []byte(m[3])
+	strs, err := parseTXTValue(m[3])
+	if err != nil {
+		return err
+	}
+	if len(strs) != 1 {
+		return fmt.Errorf("%w: CAA value is not one character-string: %q", ErrRDataFormat, value)
+	}
+	val := []byte(strs[0])
 	b.AppendUint16(uint16(2 + len(tag) + len(val)))
 	b.AppendUint8(uint8(flags))
 	b.AppendUint8(uint8(len(tag)))
@@ -363,7 +372,10 @@ func writeWireCAA(b *wire.Builder, value string) error {
 // writeWireTXT encodes one or more character-strings, each prefixed by a
 // length byte and broken at 255-byte boundaries. Matches RFC 1035 §3.3.14.
 func writeWireTXT(b *wire.Builder, value string) error {
-	strs := parseTXTValue(value)
+	strs, err := parseTXTValue(value)
+	if err != nil {
+		return err
+	}
 	type chunk struct{ body []byte }
 	var chunks []chunk
 	total := 0
@@ -394,46 +406,66 @@ func writeWireTXT(b *wire.Builder, value string) error {
 }
 
 // parseTXTValue tokenises a TXT presentation value into individual
-// character-strings. Supports quoted strings with `\` escapes and bare
-// whitespace-delimited tokens — matches the TS implementation.
-func parseTXTValue(value string) []string {
+// character-strings: quoted strings and bare whitespace-delimited
+// tokens, both with RFC 1035 §5.1 escapes (\DDD is one octet, \X is X).
+// Matches the TS implementation. A \DDD above 255 is an error.
+func parseTXTValue(value string) ([]string, error) {
 	var out []string
 	i, n := 0, len(value)
-	isSpace := func(c byte) bool { return c == ' ' || c == '\t' || c == '\n' || c == '\r' }
 	for i < n {
-		for i < n && isSpace(value[i]) {
+		for i < n && isTXTSpace(value[i]) {
 			i++
 		}
 		if i >= n {
 			break
 		}
-		if value[i] == '"' {
+		quoted := value[i] == '"'
+		if quoted {
 			i++
-			var sb strings.Builder
-			for i < n && value[i] != '"' {
-				if value[i] == '\\' && i+1 < n {
-					i++
-					sb.WriteByte(value[i])
-				} else {
-					sb.WriteByte(value[i])
-				}
-				i++
-			}
-			if i < n {
-				i++ // closing quote
-			}
-			out = append(out, sb.String())
-		} else {
-			var sb strings.Builder
-			for i < n && !isSpace(value[i]) {
-				sb.WriteByte(value[i])
-				i++
-			}
-			out = append(out, sb.String())
 		}
+		var sb strings.Builder
+		for i < n {
+			c := value[i]
+			if (quoted && c == '"') || (!quoted && isTXTSpace(c)) {
+				break
+			}
+			if c != '\\' || i+1 >= n {
+				sb.WriteByte(c)
+				i++
+				continue
+			}
+			octet, width, err := parseTXTEscape(value[i+1:])
+			if err != nil {
+				return nil, err
+			}
+			sb.WriteByte(octet)
+			i += 1 + width
+		}
+		if quoted && i < n {
+			i++ // closing quote
+		}
+		out = append(out, sb.String())
 	}
-	return out
+	return out, nil
 }
+
+func isTXTSpace(c byte) bool { return c == ' ' || c == '\t' || c == '\n' || c == '\r' }
+
+// parseTXTEscape decodes the escape after a backslash: three decimal
+// digits are one octet (\DDD), anything else is taken literally.
+// Returns the octet and the number of characters consumed.
+func parseTXTEscape(s string) (byte, int, error) {
+	if len(s) >= 3 && isDigit(s[0]) && isDigit(s[1]) && isDigit(s[2]) {
+		v := int(s[0]-'0')*100 + int(s[1]-'0')*10 + int(s[2]-'0')
+		if v > 255 {
+			return 0, 0, fmt.Errorf("%w: \\%s is not an octet", ErrRDataFormat, s[:3])
+		}
+		return byte(v), 3, nil
+	}
+	return s[0], 1, nil
+}
+
+func isDigit(c byte) bool { return c >= '0' && c <= '9' }
 
 // firstField returns the first whitespace-delimited token of s, trimmed.
 func firstField(s string) string {

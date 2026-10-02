@@ -114,7 +114,7 @@ func (rr *ResourceRecord) TXTStrings() ([]string, error) {
 		return nil, err
 	}
 	if !isGeneric {
-		return parseTXTValue(rr.Value), nil
+		return parseTXTValue(rr.Value)
 	}
 	return splitCharacterStrings(raw)
 }
