@@ -62,7 +62,7 @@ UF status legend:
 | [UP-004](#up-004) | NSEC / NSEC3 negative-proof primitives + Insecure-delegation + leaf NODATA / NXDOMAIN classification, six-state Verdict | `dnssec/canon.go`, `dnssec/nsec.go`, `dnssec/nsec3.go`, `verifier/negative.go`, `verifier/leaf_negative.go`, `verifier/verdict.go` | [landed-upstream (#22)](https://github.com/shigeya/dnsdata-js/pull/22) |
 | [UP-005](#up-005) | CNAME / DNAME chasing with worst-of verdict combination, alias-loop detection, MaxAliasHops cap, AliasStep records | `verifier/alias.go`, `verifier/chain.go::Validate`, `verifier/result.go::AliasStep` | [landed-upstream (#23)](https://github.com/shigeya/dnsdata-js/pull/23) |
 | [UP-006](#up-006) | Wildcard-synthesised positive answer support: digest target reconstruction (RFC 4035 §5.3.2) + next-closer non-existence proof (§5.3.4), `Result.Wildcard` evidence field | `dnssec/canon.go`, `dnssec/zone.go::CreateDigestTarget`, `verifier/wildcard.go`, `verifier/result.go::WildcardInfo` | [landed-upstream (#24)](https://github.com/shigeya/dnsdata-js/pull/24) |
-| [UP-007](#up-007) | DoH (RFC 8484) client with provider failover, EDNS(0)/DO query builder shared with `resolver/auth`, raw-bytes Query plus parsing Resolve; replaces TS's legacy Google JSON-API client | `resolver/doh/` | in-progress |
+| [UP-007](#up-007) | DoH (RFC 8484) client with provider failover, EDNS(0)/DO query builder shared with `resolver/auth`, raw-bytes Query plus parsing Resolve; replaces TS's legacy Google JSON-API client | `resolver/doh/` | landed-upstream (dnsdata-js `23297ad`) |
 | [UP-008](#up-008) | Pluggable `Cache` interface + built-in `MemoryCache` consulted before every `Resolver.Query`; lets a batch run reuse root/TLD DNSKEY/DS rrsets (DESIGN.md §4 SHOULD #13) | `verifier/cache.go`, `verifier/verifier.go::WithCache`, `verifier/chain.go::loadRecords` | [landed-upstream (#25)](https://github.com/shigeya/dnsdata-js/pull/25) |
 | [UP-009](#up-009) | Resolver response shape: `Resolve()` now returns `(resolver.Response, error)` where `Response = {Records, AD, RCode}`; non-zero RCODE surfaces as data rather than error so callers can distinguish NXDOMAIN/NODATA/SERVFAIL and consumers (mailsec-probe) can observe AD without re-parsing | `resolver/resolver.go`, `resolver/{doh,auth}/resolve.go`, `verifier/resolver.go`, `verifier/chain.go::loadRecords` | [landed-upstream (#28)](https://github.com/shigeya/dnsdata-js/pull/28) |
 | [UP-010](#up-010) | RFC 3597 unknown types as first class: `TYPE<n>` / `CLASS<n>` mnemonics everywhere a name is parsed or printed, and `\# <len> <hex>` generic RDATA accepted for any type and written back verbatim; shared round-trip vectors in `testdata/rdata_roundtrip.json` | `types/rfc3597.go`, `zone/generic.go`, `zone/rr.go::{Handler,WireBody}`, `dnssec/zone.go::SignRR` | landed-upstream (dnsdata-js `a5ea02d`) |
@@ -1066,10 +1066,11 @@ const (
 
 **Status.** Ships in dnsdata-go v0.1.0. Landed in dnsdata-js
 P1 of `REFACTOR_PLAN.md` as `packages/core/src/lib/resolver/doh/`
-with paired spec files under `tests/lib/resolver/doh/`.
+with paired spec files under `tests/lib/resolver/doh/`. The later
+refactor moved it out of `lib/` to `packages/core/src/resolver/doh/`.
 
-**Tracking:** in-progress — port landed locally in dnsdata-js; PR
-not yet opened (P1 of the in-flight dnsdata-js refactor).
+**Tracking:** landed-upstream in dnsdata-js `23297ad` (committed
+directly to `main`; no separate PR).
 
 ---
 
