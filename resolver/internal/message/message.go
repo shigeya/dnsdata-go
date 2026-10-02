@@ -39,5 +39,7 @@ func toResourceRecord(raw []byte, rr wire.RawRR) (*zone.ResourceRecord, error) {
 	if err != nil {
 		return nil, err
 	}
-	return zone.NewResourceRecord(rr.Name, rr.TTL, rr.Class, rr.Type, value)
+	// The RDATA octets ride along so the record encodes for signature
+	// checks even when no handler is registered for its type.
+	return zone.NewResourceRecordWithRData(rr.Name, rr.TTL, rr.Class, rr.Type, value, rr.RData)
 }

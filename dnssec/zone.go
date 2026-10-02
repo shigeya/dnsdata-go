@@ -179,7 +179,8 @@ func (z *Zone) CreateDigestTarget(rrsig *RRSig, name string, typeCovered uint16)
 		}
 		body := b.Clone()
 		if len(body) < 2 {
-			return nil, fmt.Errorf("%w: no encoder for %s %s", ErrDNSSEC, rr.Label, types.RRTypeName(rr.Type))
+			return nil, fmt.Errorf("%w: no encoder for %s %s (call %s, or keep the received RDATA with zone.NewResourceRecordWithRData)",
+				ErrDNSSEC, rr.Label, types.RRTypeName(rr.Type), registrationFor(rr.Type))
 		}
 		bodies = append(bodies, body)
 	}
@@ -204,6 +205,16 @@ func (z *Zone) CreateDigestTarget(rrsig *RRSig, name string, typeCovered uint16)
 		out.AppendBytes(body)
 	}
 	return out.Clone(), nil
+}
+
+// registrationFor names the call that registers an encoder for rrtype.
+func registrationFor(rrtype uint16) string {
+	switch rrtype {
+	case types.TypeDNSKEY, types.TypeCDNSKEY, types.TypeRRSIG, types.TypeDS, types.TypeCDS,
+		types.TypeNSEC, types.TypeNSEC3, types.TypeNSEC3PARAM:
+		return "dnssec.RegisterHandlers"
+	}
+	return "zone.RegisterHandlers"
 }
 
 // VerifyRRSIG checks one RRSIG against the RRset it covers. Returns

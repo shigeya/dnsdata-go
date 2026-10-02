@@ -8,6 +8,10 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `zone.NewResourceRecordWithRData`: a record with its presentation
+  value and the RDATA octets it was received as. `WireBody` writes
+  those octets when no handler or built-in encoder exists for the
+  type. The DoH / auth / DoT clients build their records with it.
 - `wire.FlagCD`, `wire.QueryOptions` and `wire.BuildQueryWithOptions`:
   a query with the CD (checking disabled) bit, RFC 4035 §3.2.2.
   `doh.WithCheckingDisabled` and `auth.WithCheckingDisabled` set it on
@@ -79,14 +83,16 @@ this project adheres to [Semantic Versioning](https://semver.org/).
   a wildcard CNAME is synthesised for queries of any type (RFC 4592
   §3.3.3), not only CNAME; and a DNAME answer carries the unsigned
   CNAME synthesised from it (RFC 6672 §5.3.1).
-- `verifier.NewVerifier` registers the zone handlers
-  (`zone.RegisterHandlers`) as well as the DNSSEC ones, as the signer
-  does. A TLSA, SMIMEA, SVCB or HTTPS answer received in presentation
-  form, which the DoH / auth / DoT clients produce since TLSA / SVCB
-  RDATA is presented by type, could not be encoded to check its RRSIG
-  unless the caller had registered them, and validation ended
-  `indeterminate` ("no encoder"). Shared vector `testdata/handlers` in
-  `verifier/`.
+- TLSA, SMIMEA, SVCB and HTTPS answers from the DoH / auth / DoT
+  clients validate without `zone.RegisterHandlers()`. Since that RDATA
+  is presented by type, only the zone handlers could encode it back for
+  the RRSIG check, and validation ended in an error ("no encoder"). The
+  clients now keep the received octets on the record
+  (`zone.NewResourceRecordWithRData`), and `WireBody` writes them when
+  no handler or built-in encoder exists for the type. `NewVerifier`
+  still registers only the DNSSEC handlers. A record that still has no
+  encoder fails with an error naming the registration it needs. Shared
+  vector `testdata/handlers` in `verifier/`, served over UDP.
 - A name below a DNAME in a zone signed with opt-out NSEC3 follows the
   DNAME. The walker asked for DS at every ancestor of the query name
   and took an opt-out NSEC3 that happened to cover the name's hash

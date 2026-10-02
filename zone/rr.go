@@ -68,6 +68,25 @@ type ResourceRecord struct {
 	Type    uint16
 	Value   string
 	handler RecordHandler
+	rdata   []byte // the RDATA as received, see NewResourceRecordWithRData
+}
+
+// NewResourceRecordWithRData is [NewResourceRecord] for a record read
+// off the wire: value is its presentation form and rdata the RDATA
+// octets it was decoded from. [ResourceRecord.WireBody] writes rdata
+// when no handler or built-in encoder is available for the type, so a
+// received record still encodes (and its RRSIG verifies) without the
+// zone handlers registered. rdata is copied.
+func NewResourceRecordWithRData(label string, ttl uint32, class, rrtype any, value string, rdata []byte) (*ResourceRecord, error) {
+	if len(rdata) > maxRDataLength {
+		return nil, fmt.Errorf("%w: RDATA length %d", ErrRDataFormat, len(rdata))
+	}
+	rr, err := NewResourceRecord(label, ttl, class, rrtype, value)
+	if err != nil {
+		return nil, err
+	}
+	rr.rdata = append([]byte{}, rdata...)
+	return rr, nil
 }
 
 // NewResourceRecord constructs an RR from its textual fields. class and
@@ -175,8 +194,13 @@ func (rr *ResourceRecord) WireHeader(b *wire.Builder) error {
 // ahead of any handler, so its octets (and hence its canonical form)
 // never pass through a re-encoding.
 //
-// For types without a built-in or registered encoder the call is a no-op.
-// Returns [ErrRDataFormat] when an encoder recognises the type but the
+// For types without a built-in or registered encoder, a record built
+// with [NewResourceRecordWithRData] writes the octets it was received
+// as; for any other record the call is a no-op. The fallback serves the
+// types whose RDATA holds no compressible or case-folded names (TLSA,
+// SMIMEA, SVCB, HTTPS, …), so the received octets are their canonical
+// form (RFC 4034 §6.2, RFC 3597 §4); the types that hold such names
+// have built-in encoders. Returns [ErrRDataFormat] when an encoder recognises the type but the
 // value is malformed, and [ErrPresentationFormat] for malformed generic
 // RDATA.
 func (rr *ResourceRecord) WireBody(b *wire.Builder) error {
@@ -208,6 +232,9 @@ func (rr *ResourceRecord) WireBody(b *wire.Builder) error {
 		return writeWireSRV(b, rr.Value)
 	case types.TypeCAA:
 		return writeWireCAA(b, rr.Value)
+	}
+	if rr.rdata != nil {
+		writeWireGeneric(b, rr.rdata)
 	}
 	return nil
 }

@@ -28,6 +28,11 @@ import (
 //   - MUST NOT mutate the slice or its element pointers after [Put]
 //     returns. The verifier shares the same pointers with the
 //     underlying [dnssec.Zone] and a future cache reader.
+//   - SHOULD return the same record values it was given. Records from
+//     the resolver clients carry the RDATA octets they were received
+//     as ([zone.NewResourceRecordWithRData]); a cache that rebuilds
+//     records from their presentation fields loses them, and TLSA /
+//     SMIMEA / SVCB / HTTPS answers then need [zone.RegisterHandlers].
 //
 // Caching NODATA:
 //
