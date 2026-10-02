@@ -65,7 +65,12 @@ func ds(t testing.TB, k *signer.Key) string {
 
 func sign(t testing.TB, z *zone.Zone, apex string, keys []*signer.Key, from, until time.Time) *zone.Zone {
 	t.Helper()
-	signed, err := signer.SignZone(z, apex, keys, signer.Options{Inception: from, Expiration: until})
+	return signWith(t, z, apex, keys, signer.Options{Inception: from, Expiration: until})
+}
+
+func signWith(t testing.TB, z *zone.Zone, apex string, keys []*signer.Key, opts signer.Options) *zone.Zone {
+	t.Helper()
+	signed, err := signer.SignZone(z, apex, keys, opts)
 	if err != nil {
 		t.Fatalf("SignZone(%s): %v", apex, err)
 	}
@@ -98,6 +103,14 @@ var hierarchyKeys = []struct {
 
 func buildHierarchy(t testing.TB) *hierarchy {
 	t.Helper()
+	return buildHierarchyWith(t, nil)
+}
+
+// buildHierarchyWith signs every zone with an NSEC3 chain of the given
+// parameters, or with NSEC when nsec3 is nil.
+func buildHierarchyWith(t testing.TB, nsec3 *signer.NSEC3Options) *hierarchy {
+	t.Helper()
+	opts := signer.Options{Inception: inception, Expiration: expiration, NSEC3: nsec3}
 	keys := make([]*signer.Key, len(hierarchyKeys))
 	for i, k := range hierarchyKeys {
 		keys[i] = fixedKey(t, k.owner, k.seed, k.flags)
@@ -121,9 +134,9 @@ ns.insecure A 192.0.2.54
 	leaf := readZone(t, leafText)
 	leafKeys := []*signer.Key{leafKSK, leafZSK}
 	return &hierarchy{
-		root:         sign(t, root, ".", []*signer.Key{rootKSK}, inception, expiration),
-		tld:          sign(t, tld, "test.", []*signer.Key{tldKSK}, inception, expiration),
-		leaf:         sign(t, leaf, "example.test.", leafKeys, inception, expiration),
+		root:         signWith(t, root, ".", []*signer.Key{rootKSK}, opts),
+		tld:          signWith(t, tld, "test.", []*signer.Key{tldKSK}, opts),
+		leaf:         signWith(t, leaf, "example.test.", leafKeys, opts),
 		rootKSK:      rootKSK,
 		leafKeys:     leafKeys,
 		leafUnsigned: leaf,

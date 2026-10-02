@@ -3,6 +3,8 @@ package memory_test
 import (
 	"context"
 	"errors"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -58,34 +60,73 @@ func validate(t *testing.T, v *verifier.Verifier, qname string, qtype uint16) *v
 
 // C-6 / C-8 / C-9 acceptance: a fake root is the trust anchor, and the
 // in-memory authority answers every query the verifier makes.
-func TestHierarchy_Verdicts(t *testing.T) {
-	h := buildHierarchy(t)
+var verdictCases = []struct {
+	name  string
+	qname string
+	qtype uint16
+	want  verifier.Verdict
+}{
+	{"positive answer", "www.example.test.", types.TypeA, verifier.VerdictSecure},
+	{"apex answer", "example.test.", types.TypeSOA, verifier.VerdictSecure},
+	{"type without a mnemonic", "key.example.test.", 65400, verifier.VerdictSecure},
+	{"name does not exist", "nope.example.test.", types.TypeA, verifier.VerdictSecureNXDomain},
+	{"name does not exist in the parent", "nope.test.", types.TypeA, verifier.VerdictSecureNXDomain},
+	{"type does not exist", "www.example.test.", types.TypeMX, verifier.VerdictSecureNoData},
+	{"apex type does not exist", "test.", types.TypeMX, verifier.VerdictSecureNoData},
+	{"wildcard expansion", "x.wild.example.test.", types.TypeA, verifier.VerdictSecure},
+	{"wildcard without the type", "x.wild.example.test.", types.TypeTXT, verifier.VerdictSecureNoData},
+	{"empty non-terminal", "wild.example.test.", types.TypeA, verifier.VerdictSecureNoData},
+	{"CNAME followed", "alias.example.test.", types.TypeA, verifier.VerdictSecure},
+	{"unsigned delegation", "www.insecure.test.", types.TypeA, verifier.VerdictInsecure},
+}
+
+// checkVerdicts runs verdictCases; insecure names the cases whose
+// verdict is instead Insecure for an opt-out reason.
+func checkVerdicts(t *testing.T, h *hierarchy, insecure ...string) {
+	t.Helper()
 	v := newVerifier(t, h, newAuthority(t, h, h.leaf), now)
-	cases := []struct {
-		name  string
-		qname string
-		qtype uint16
-		want  verifier.Verdict
-	}{
-		{"positive answer", "www.example.test.", types.TypeA, verifier.VerdictSecure},
-		{"apex answer", "example.test.", types.TypeSOA, verifier.VerdictSecure},
-		{"type without a mnemonic", "key.example.test.", 65400, verifier.VerdictSecure},
-		{"name does not exist", "nope.example.test.", types.TypeA, verifier.VerdictSecureNXDomain},
-		{"type does not exist", "www.example.test.", types.TypeMX, verifier.VerdictSecureNoData},
-		{"wildcard expansion", "x.wild.example.test.", types.TypeA, verifier.VerdictSecure},
-		{"wildcard without the type", "x.wild.example.test.", types.TypeTXT, verifier.VerdictSecureNoData},
-		{"empty non-terminal", "wild.example.test.", types.TypeA, verifier.VerdictSecureNoData},
-		{"CNAME followed", "alias.example.test.", types.TypeA, verifier.VerdictSecure},
-		{"unsigned delegation", "www.insecure.test.", types.TypeA, verifier.VerdictInsecure},
-	}
-	for _, tc := range cases {
+	for _, tc := range verdictCases {
 		t.Run(tc.name, func(t *testing.T) {
 			res := validate(t, v, tc.qname, tc.qtype)
-			if res.Verdict != tc.want {
-				t.Errorf("Verdict = %v (bogus %q at %q), want %v", res.Verdict, res.BogusReason, res.BogusAt, tc.want)
+			want := tc.want
+			if slices.Contains(insecure, tc.name) {
+				want = verifier.VerdictInsecure
+				if !strings.Contains(res.InsecureReason, "opt-out") {
+					t.Errorf("InsecureReason = %q, want it to mention opt-out", res.InsecureReason)
+				}
+			}
+			if res.Verdict != want {
+				t.Errorf("Verdict = %v (bogus %q at %q), want %v", res.Verdict, res.BogusReason, res.BogusAt, want)
 			}
 		})
 	}
+}
+
+func TestHierarchy_Verdicts(t *testing.T) {
+	checkVerdicts(t, buildHierarchy(t))
+}
+
+// The same queries against a hierarchy signed with NSEC3: the authority
+// answers with NSEC3 proofs (RFC 5155 §7.2).
+func TestHierarchy_VerdictsNSEC3(t *testing.T) {
+	for name, params := range map[string]signer.NSEC3Options{
+		"RFC 9276":        {},
+		"salt+iterations": {Iterations: 3, Salt: []byte{0xab, 0xcd}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			checkVerdicts(t, buildHierarchyWith(t, &params))
+		})
+	}
+}
+
+// With opt-out every NSEC3 has the flag, so a name whose next closer
+// name is only covered may be an insecure delegation: its denial and a
+// wildcard answer for it are Insecure, not Secure (RFC 5155 §6, §9.2).
+// Names with a matching NSEC3 stay Secure.
+func TestHierarchy_VerdictsNSEC3OptOut(t *testing.T) {
+	checkVerdicts(t, buildHierarchyWith(t, &signer.NSEC3Options{OptOut: true}),
+		"name does not exist", "name does not exist in the parent",
+		"wildcard expansion", "wildcard without the type")
 }
 
 // C-7: Result.Answer is the RRset that was validated — after a CNAME

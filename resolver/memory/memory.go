@@ -4,15 +4,14 @@
 // It answers the queries a validating resolver makes — answers with
 // their RRSIGs, DNSKEY at each apex, DS from the parent side of a zone
 // cut, referrals for delegations it does not hold, NODATA and NXDOMAIN
-// with their NSEC proofs, CNAME, DNAME and wildcard synthesis — without
-// any network. Together with dnssec/signer it lets a whole hierarchy,
+// with their NSEC or NSEC3 proofs (RFC 5155 §7.2, opt-out included),
+// CNAME, DNAME and wildcard synthesis — without any network. Together with dnssec/signer it lets a whole hierarchy,
 // including a private root, be built and validated in a test:
 // verifier.WithTrustAnchors takes the root's anchors from
 // signer.RootAnchors, and verifier.WithClock pins the time.
 //
 // An [Authority] is immutable after [New] and safe for concurrent use;
-// every response carries fresh copies of the records. NSEC3 proofs are
-// not generated.
+// every response carries fresh copies of the records.
 package memory
 
 import (

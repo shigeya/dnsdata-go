@@ -320,6 +320,13 @@ func TestSignZone_AcceptedByBIND(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	checkWithBIND(t, signed)
+}
+
+// checkWithBIND runs named-checkzone and dnssec-verify, when installed,
+// over the signed example.test. zone.
+func checkWithBIND(t *testing.T, signed *zone.Zone) {
+	t.Helper()
 	text, err := signed.PrintCanonical(0)
 	if err != nil {
 		t.Fatal(err)

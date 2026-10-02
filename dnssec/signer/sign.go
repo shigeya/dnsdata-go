@@ -2,6 +2,7 @@ package signer
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -20,17 +21,23 @@ type Options struct {
 	// DNSKEYTTL is the TTL of the DNSKEY records added at the apex; 0
 	// uses the SOA TTL, or 3600 without an SOA.
 	DNSKEYTTL uint32
-	// NSECTTL is passed to [BuildNSEC]; 0 derives it from the SOA.
+	// NSECTTL is passed to [BuildNSEC] or [BuildNSEC3]; 0 derives it
+	// from the SOA.
 	NSECTTL uint32
+	// NSEC3, when set, makes the denial chain NSEC3 ([BuildNSEC3]) with
+	// these parameters instead of NSEC. &NSEC3Options{} is RFC 9276.
+	NSEC3 *NSEC3Options
 }
 
 // SignZone returns a signed copy of z, whose records must all be at or
 // below apex. The input is not modified.
 //
 // The copy gets the keys' DNSKEY records at the apex (added to any
-// DNSKEY already there), an NSEC chain ([BuildNSEC]), and an RRSIG over
-// every authoritative RRset: at a delegation point only DS and NSEC are
-// signed, and glue below a delegation is not signed. With both KSKs
+// DNSKEY already there), an NSEC chain ([BuildNSEC]) or with
+// opts.NSEC3 an NSEC3 chain and NSEC3PARAM ([BuildNSEC3]), and an
+// RRSIG over every authoritative RRset: at a delegation point only DS
+// and NSEC are signed, every NSEC3 is, and glue below a delegation is
+// not signed. With both KSKs
 // (SEP flag) and ZSKs among keys, the KSKs sign the DNSKEY RRset and the
 // ZSKs sign everything else; otherwise every key signs every RRset
 // (combined signing keys). RRSIG / NSEC / NSEC3 / NSEC3PARAM records
@@ -51,11 +58,11 @@ func SignZone(z *zone.Zone, apex string, keys []*Key, opts Options) (*zone.Zone,
 	if err := addDNSKEYs(out, apex, keys, opts.DNSKEYTTL); err != nil {
 		return nil, err
 	}
-	nsecs, err := BuildNSEC(out, apex, opts.NSECTTL)
+	chain, err := buildChain(out, apex, opts)
 	if err != nil {
 		return nil, err
 	}
-	for _, rr := range nsecs {
+	for _, rr := range chain {
 		out.AddRR(rr)
 	}
 	sigs, err := signRRsets(out, apex, keys, opts)
@@ -137,39 +144,85 @@ func addDNSKEYs(out *zone.Zone, apex string, keys []*Key, ttl uint32) error {
 	return nil
 }
 
+// buildChain returns the NSEC chain, or the NSEC3 chain and NSEC3PARAM.
+func buildChain(z *zone.Zone, apex string, opts Options) ([]*zone.ResourceRecord, error) {
+	if opts.NSEC3 != nil {
+		return BuildNSEC3(z, apex, opts.NSECTTL, *opts.NSEC3)
+	}
+	return BuildNSEC(z, apex, opts.NSECTTL)
+}
+
 // signRRsets returns the RRSIG records for every RRset that must be
-// signed in out, whose NSEC chain is already in place.
+// signed in out, whose denial chain is already in place.
 func signRRsets(out *zone.Zone, apex string, keys []*Key, opts Options) ([]*zone.ResourceRecord, error) {
 	v, err := newZoneView(out, apex)
 	if err != nil {
 		return nil, err
 	}
+	// newZoneView skips generated types, so the chain's are added here.
+	chain, chainOwners := chainTypesOf(out, v)
 	ksks, zsks := splitKeys(keys)
 	dz := &dnssec.Zone{Zone: out}
 	var sigs []*zone.ResourceRecord
+	sign := func(owner string, t uint16) error {
+		signers := zsks
+		if t == types.TypeDNSKEY {
+			signers = ksks
+		}
+		for _, k := range signers {
+			rr, err := signRRset(dz, owner, t, apex, k, opts)
+			if err != nil {
+				return err
+			}
+			sigs = append(sigs, rr)
+		}
+		return nil
+	}
 	for _, owner := range v.owners {
 		if v.isOccluded(owner) {
 			continue
 		}
-		// newZoneView skips generated types, so NSEC is added here.
-		for _, t := range append(v.types[strings.ToLower(owner)], types.TypeNSEC) {
+		key := strings.ToLower(owner)
+		for _, t := range slices.Concat(v.types[key], chain[key]) {
 			if v.isCut(owner) && t != types.TypeDS && t != types.TypeNSEC {
 				continue
 			}
-			signers := zsks
-			if t == types.TypeDNSKEY {
-				signers = ksks
+			if err := sign(owner, t); err != nil {
+				return nil, err
 			}
-			for _, k := range signers {
-				rr, err := signRRset(dz, owner, t, apex, k, opts)
-				if err != nil {
-					return nil, err
-				}
-				sigs = append(sigs, rr)
+		}
+	}
+	for _, owner := range chainOwners {
+		for _, t := range chain[strings.ToLower(owner)] {
+			if err := sign(owner, t); err != nil {
+				return nil, err
 			}
 		}
 	}
 	return sigs, nil
+}
+
+// chainTypesOf returns the NSEC / NSEC3 / NSEC3PARAM types in z by
+// lower-cased owner, and in record order the owners that hold nothing
+// else (the hashed NSEC3 owners).
+func chainTypesOf(z *zone.Zone, v *zoneView) (map[string][]uint16, []string) {
+	chain := map[string][]uint16{}
+	var chainOwners []string
+	for _, rr := range z.AllRecords() {
+		if rr.Type != types.TypeNSEC && rr.Type != types.TypeNSEC3 && rr.Type != types.TypeNSEC3PARAM {
+			continue
+		}
+		key := strings.ToLower(rr.Label)
+		if _, seen := chain[key]; !seen {
+			if _, isOwner := v.types[key]; !isOwner {
+				chainOwners = append(chainOwners, rr.Label)
+			}
+		}
+		if !slices.Contains(chain[key], rr.Type) {
+			chain[key] = append(chain[key], rr.Type)
+		}
+	}
+	return chain, chainOwners
 }
 
 // splitKeys returns (DNSKEY signers, other signers): KSKs and ZSKs when

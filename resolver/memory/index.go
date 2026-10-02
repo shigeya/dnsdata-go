@@ -66,6 +66,7 @@ type zoneIndex struct {
 	exists  map[string]bool                   // owners and their ancestors down to the apex
 	cuts    []string                          // delegation points
 	nsecs   []nsecEntry
+	nsec3   *nsec3Chain // nil when the zone has no NSEC3
 }
 
 func newZoneIndex(apex string, z *zone.Zone) (*zoneIndex, error) {
@@ -108,6 +109,11 @@ func (idx *zoneIndex) add(rr *zone.ResourceRecord) error {
 			return fmt.Errorf("%w: NSEC at %s: %v", ErrConfig, rr.Label, err)
 		}
 		idx.nsecs = append(idx.nsecs, nsecEntry{owner: owner, nsec: n})
+	case types.TypeNSEC3:
+		if idx.nsec3 == nil {
+			idx.nsec3 = &nsec3Chain{}
+		}
+		return idx.nsec3.add(owner, rr.Value)
 	case types.TypeNS:
 		if owner != idx.apex && !slices.Contains(idx.cuts, owner) {
 			idx.cuts = append(idx.cuts, owner)

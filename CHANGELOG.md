@@ -13,6 +13,17 @@ this project adheres to [Semantic Versioning](https://semver.org/).
   `doh.WithCheckingDisabled` and `auth.WithCheckingDisabled` set it on
   every query, so a validating upstream returns data it would reject
   as bogus instead of SERVFAIL. Off by default; queries are unchanged.
+- `signer.Options.NSEC3` and `signer.BuildNSEC3`: sign with an NSEC3
+  chain (RFC 5155 §7.1) and an NSEC3PARAM at the apex instead of NSEC.
+  `&signer.NSEC3Options{}` is the RFC 9276 profile (no extra
+  iterations, no salt); `Iterations`, `Salt` and `OptOut` (unsigned
+  delegations left out of the chain, RFC 5155 §6) are options. NSEC
+  stays the default. BIND's `dnssec-verify` accepts both profiles.
+- `resolver/memory` answers zones signed with NSEC3 with NSEC3 proofs
+  (RFC 5155 §7.2): NODATA, empty non-terminal, NXDOMAIN, wildcard
+  answer and wildcard NODATA, and the referral to a delegation without
+  DS, by the matching NSEC3 or, under opt-out, the closest provable
+  encloser proof.
 
 ### Changed
 

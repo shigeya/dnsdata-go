@@ -138,16 +138,28 @@ func BuildNSEC(z *zone.Zone, apex string, ttl uint32) ([]*zone.ResourceRecord, e
 
 // bitmapText lists the types for owner's NSEC in presentation form.
 func (v *zoneView) bitmapText(owner string) string {
-	present := []uint16{types.TypeRRSIG, types.TypeNSEC}
+	return typeNames(append(v.chainTypes(owner), types.TypeRRSIG, types.TypeNSEC))
+}
+
+// chainTypes returns the types at owner that a denial bitmap lists: at
+// a delegation point only NS and DS. The result is a fresh slice.
+func (v *zoneView) chainTypes(owner string) []uint16 {
+	var out []uint16
 	for _, t := range v.types[strings.ToLower(owner)] {
 		if v.isCut(owner) && t != types.TypeNS && t != types.TypeDS {
 			continue
 		}
-		present = append(present, t)
+		out = append(out, t)
 	}
-	slices.Sort(present)
-	names := make([]string, 0, len(present))
-	for _, t := range slices.Compact(present) {
+	return out
+}
+
+// typeNames returns ts sorted, once each, as space-separated mnemonics.
+func typeNames(ts []uint16) string {
+	sorted := slices.Clone(ts)
+	slices.Sort(sorted)
+	names := make([]string, 0, len(sorted))
+	for _, t := range slices.Compact(sorted) {
 		names = append(names, types.RRTypeName(t))
 	}
 	return strings.Join(names, " ")
