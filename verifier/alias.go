@@ -104,7 +104,7 @@ func (v *Verifier) tryDNAME(currentZone *dnssec.Zone, currentName, qname string)
 		}
 		alias := &AliasStep{
 			Type:   "dname",
-			From:   qname,
+			From:   anc,
 			Target: synth,
 			Zone:   currentName,
 		}

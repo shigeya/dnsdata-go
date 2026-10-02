@@ -125,8 +125,10 @@ type AliasStep struct {
 	// Type is "cname" or "dname".
 	Type string `json:"type"`
 
-	// From is the name that produced the alias (i.e. the CNAME owner
-	// or DNAME owner).
+	// From is the owner of the signed alias record: the CNAME owner
+	// (which is the name queried in this hop) or the DNAME owner (an
+	// ancestor of it). The name queried in a hop is the original qname
+	// for the first hop and the previous hop's Target after that.
 	From string `json:"from"`
 
 	// Target is the rewritten name the chain walker continues with

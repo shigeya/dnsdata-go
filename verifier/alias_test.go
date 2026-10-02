@@ -300,7 +300,7 @@ func TestValidate_DNAME_Synthesised(t *testing.T) {
 		t.Fatalf("Aliases len = %d, want 1: %+v", len(res.Aliases), res.Aliases)
 	}
 	step := res.Aliases[0]
-	if step.Type != "dname" || step.Target != "foo.also.example.com." {
-		t.Errorf("alias step = %+v, want DNAME → foo.also.example.com.", step)
+	if step.Type != "dname" || step.From != "sub.example.com." || step.Target != "foo.also.example.com." {
+		t.Errorf("alias step = %+v, want DNAME sub.example.com. → foo.also.example.com.", step)
 	}
 }

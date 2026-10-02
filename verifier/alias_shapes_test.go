@@ -143,7 +143,8 @@ func TestValidate_DNAME_WithSynthesisedCNAME_Authoritative(t *testing.T) {
 	resp[lookupKey{"www.example.net.", types.TypeTXT}] = rrsetWithSigs(c.dst.z, "www.example.net.", types.TypeTXT)
 
 	res := c.validate(t, resp, "www.example.com.", types.TypeTXT)
-	assertSecureAlias(t, res, "dname", "www.example.com.", "www.example.net.", types.TypeTXT)
+	// From is the DNAME owner, not the queried name.
+	assertSecureAlias(t, res, "dname", "example.com.", "www.example.net.", types.TypeTXT)
 }
 
 // TestValidate_DNAME_RecursiveResponse: a recursive resolver follows
@@ -159,7 +160,7 @@ func TestValidate_DNAME_RecursiveResponse(t *testing.T) {
 	resp[lookupKey{"www.example.net.", types.TypeTXT}] = targetTXT
 
 	res := c.validate(t, resp, "www.example.com.", types.TypeTXT)
-	assertSecureAlias(t, res, "dname", "www.example.com.", "www.example.net.", types.TypeTXT)
+	assertSecureAlias(t, res, "dname", "example.com.", "www.example.net.", types.TypeTXT)
 }
 
 // TestValidate_CNAME_RecursiveResponse: a recursive resolver returns
