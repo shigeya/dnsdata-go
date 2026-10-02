@@ -54,10 +54,12 @@ mechanical. TS paths are relative to `dnsdata-js/packages/core/src/`:
 | `types/dns_type_table.ts`, `types/algorithm.ts` | `types/`            | RR-type / class / opcode / rcode / algorithm tables, `TYPE<n>` / `CLASS<n>` (UP-010) |
 | `wire/dns_wire.ts` (encode/decode)       | `wire/name.go`             | `domain_name2wire`, `wire2domain_name` |
 | `wire/dns_wire.ts` (`parse_domain_name`) | `wire/name_decompress.go`  | RFC 1035 §4.1.4 compression-pointer decoder |
-| `wire/dns_wire.ts` (`build_query`)       | `wire/query.go`            | Query builder with EDNS(0) / DO, shared by the DoH and auth clients |
+| `wire/dns_wire.ts` (`build_query`)       | `wire/query.go`            | Query builder with EDNS(0) / DO and optional CD (UP-016), shared by the DoH, auth and DoT clients |
 | `wire/dns_wire_util.ts`                  | `wire/builder.go`          | Wire builder |
 | `wire/dns_message.ts`                    | `wire/message.go`          | `parse_message`, `Header`, `Question`, `RawRR`, `RawMessage` (UP-002) |
 | `wire/rdata_decoder.ts`                  | `wire/rdata.go`            | `rdata_to_string`, RFC 3597 fallback (UP-002) |
+| `wire/rdata_svcb.ts`                     | `wire/rdata_svcb.go`       | TLSA / SMIMEA and SVCB / HTTPS presentation (UP-017) |
+| `wire/ip_format.ts`                      | —                          | IP address strings (Go uses `net.IP.String`) |
 | `zone/dns_zone.ts`                       | `zone/rr.go`, `zone/zone.go` | `ResourceRecord`, `Zone`, handler registry |
 | `zone/generic.ts`                        | `zone/generic.go`          | RFC 3597 `\# <len> <hex>` generic RDATA (UP-010) |
 | `zone/strict.ts`                         | `zone/strict.go`           | Strict master-file reader (UP-011) |
@@ -71,11 +73,15 @@ mechanical. TS paths are relative to `dnsdata-js/packages/core/src/`:
 | `dnssec/crypto.ts`                       | `dnssec/crypto.go`         | Signature verification (Node `crypto` / Go `crypto/...`) |
 | `dnssec/handlers.ts`                     | `dnssec/handlers.go`       | DNSSEC handler registration |
 | `dnssec/dnssec_key_loader.ts`, `dnssec/root_anchors.ts` | `dnssec/anchors.go` | Root trust anchors |
-| `dnssec/signer/`                         | `dnssec/signer/`           | Key generation / loading, DS, NSEC chain, zone signing (UP-013) |
+| `dnssec/signer/`                         | `dnssec/signer/`           | Key generation / loading, DS, NSEC chain, zone signing (UP-013); NSEC3 chain (`nsec3.ts` ↔ `nsec3.go`, UP-018) |
 | `resolver/response.ts`                   | `resolver/resolver.go`     | `Response { records, ad, rcode }` (UP-009) |
 | `resolver/doh/`                          | `resolver/doh/`            | RFC 8484 DoH client with provider failover (UP-007) |
 | `resolver/auth/`                         | `resolver/auth/`           | UDP / TCP authoritative-DNS client (UP-003) |
-| `resolver/memory/`                       | `resolver/memory/`         | In-memory authority for signed zones (UP-014) |
+| `resolver/dot/`                          | `resolver/dot/`            | RFC 7858 DNS-over-TLS client (UP-019) |
+| `resolver/stream.ts`                     | `resolver/internal/stream/` | Two-octet length framing on TCP / TLS, shared by auth and DoT (UP-019); TS also holds the Node socket reader |
+| `resolver/message.ts`                    | `resolver/internal/message/` | Response message → `Response`, shared by auth, DoH and DoT (UP-019) |
+| `resolver/addr.ts`                       | —                          | `host:port` handling (Go uses `net.SplitHostPort` / `JoinHostPort`) |
+| `resolver/memory/`                       | `resolver/memory/`         | In-memory authority for signed zones (UP-014); NSEC3 proofs (`nsec3.ts` ↔ `nsec3.go`, UP-018) |
 | `verifier/`                              | `verifier/`                | Chain-of-trust walker with pluggable `Resolver` (UP-001, UP-005, UP-006), `Cache` (UP-008), `Result.answer` (UP-015) |
 | `dns_exception.ts`                       | per-package `errors.go`    | TS exception hierarchy ↔ Go sentinel errors |
 | `../tests/testdata/`                     | `testdata/`                | Shared vectors (`rdata_roundtrip.json`, `signed/`); byte-identical, generated on the Go side |

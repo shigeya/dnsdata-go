@@ -71,6 +71,10 @@ UF status legend:
 | [UP-013](#up-013) | Zone signer: key generation and loading (PKCS#8 PEM, BIND `.private`), DS / trust-anchor derivation, NSEC chain, `SignZone` with KSK/ZSK split or CSK and caller-supplied validity window | `dnssec/signer/` | landed-upstream (dnsdata-js `4faff87`) |
 | [UP-014](#up-014) | In-memory authority (`verifier.Resolver`) for signed zones with DS from the parent side, referrals, NSEC proofs, CNAME / DNAME / wildcard, fault injection; private-root validation fixed by tests, an example and shared vectors in `testdata/signed/` | `resolver/memory/` | landed-upstream (dnsdata-js `14638e0`) |
 | [UP-015](#up-015) | `Result.Answer`: the validated terminal RRset (presentation value, RDATA octets, TTL) and the RRSIGs that verified it with their validity windows; set only for Secure | `verifier/result.go`, `verifier/answer.go`, `verifier/chain.go::resolveLeaf` | landed-upstream (dnsdata-js `aba7822`) |
+| [UP-016](#up-016) | Optional CD (checking disabled) bit on queries: `wire.BuildQueryWithOptions`, `WithCheckingDisabled` on the DoH and auth clients | `wire/query.go`, `resolver/{doh,auth}/client.go` | landed-upstream (dnsdata-js `2a8e6f7`) |
+| [UP-017](#up-017) | Type-specific presentation of TLSA / SMIMEA and SVCB / HTTPS in `RDataToString`, generic only where the zone parser could not read the result back | `wire/rdata_svcb.go` | landed-upstream (dnsdata-js `4a08085`) |
+| [UP-018](#up-018) | NSEC3 signing (RFC 5155 §7.1; RFC 9276 profile by default, salt / iterations / opt-out as options) and NSEC3 proofs from the in-memory authority (§7.2) | `dnssec/signer/nsec3.go`, `resolver/memory/nsec3.go` | landed-upstream (dnsdata-js `0e76011`) |
+| [UP-019](#up-019) | DNS-over-TLS client (RFC 7858, RFC 8310 strict authentication) sharing the stream framing with the auth client | `resolver/dot/`, `resolver/internal/{stream,message}` | landed-upstream (dnsdata-js `b338bc2`) |
 
 UP status legend:
 
@@ -1406,7 +1410,7 @@ func New(opts ...Option) (*Authority, error)
 func (a *Authority) Query(ctx context.Context, name string, qtype uint16) (resolver.Response, error)
 ```
 
-**Behaviour.** The deepest zone containing the name answers, except that a DS query for a zone apex goes to the parent. Within a zone: at or below a delegation point → referral (NS plus the signed DS, or the NSEC proving no DS); an existing name → the RRset with its RRSIGs, else a CNAME, else NODATA with the name's NSEC; an empty non-terminal → NODATA with the spanning NSEC; below a DNAME → the DNAME; otherwise wildcard synthesis from `*.<closest encloser>` (answer and RRSIG rewritten to the query name, plus the NSEC covering the next closer name), or NXDOMAIN with the NSECs covering the name and the wildcard. A name outside every zone gets REFUSED; `WithFault` returns a fixed RCODE. Responses are fresh copies; the authority is immutable after `New` and safe for concurrent use. NSEC3 proofs are not generated.
+**Behaviour.** The deepest zone containing the name answers, except that a DS query for a zone apex goes to the parent. Within a zone: at or below a delegation point → referral (NS plus the signed DS, or the NSEC proving no DS); an existing name → the RRset with its RRSIGs, else a CNAME, else NODATA with the name's NSEC; an empty non-terminal → NODATA with the spanning NSEC; below a DNAME → the DNAME; otherwise wildcard synthesis from `*.<closest encloser>` (answer and RRSIG rewritten to the query name, plus the NSEC covering the next closer name), or NXDOMAIN with the NSECs covering the name and the wildcard. A name outside every zone gets REFUSED; `WithFault` returns a fixed RCODE. Responses are fresh copies; the authority is immutable after `New` and safe for concurrent use. NSEC3 proofs came later (UP-018).
 
 **Private root as trust anchor (C-9).** No verifier change was needed: `signer.RootAnchors(rootKSK)` → `verifier.WithTrustAnchors`, and `verifier.WithClock` pins the time. Covered by `TestHierarchy_Verdicts` (Secure, SecureNoData, SecureNXDomain, wildcard, CNAME, unsigned delegation → Insecure), `TestHierarchy_TamperedRRsetIsBogus`, `TestHierarchy_ExpiredSignatureIsBogus`, `TestHierarchy_PrintAndReadBack`, and the package `Example`.
 
@@ -1462,6 +1466,120 @@ type AnswerSignature struct {
 **TS migration notes.** Add `answer?: Answer` to the TS `Result`; represent `rdata` as base64 and the window as ISO 8601 strings so the JSON matches.
 
 **Tracking:** landed-upstream in dnsdata-js `aba7822` (`Result.answer`; JSON keys and timestamp form match Go).
+
+---
+
+## UP-016
+
+### Optional CD bit on queries
+
+**Go source:** `wire/query.go` (`FlagCD`, `QueryOptions`, `BuildQueryWithOptions`), `resolver/doh/client.go` and `resolver/auth/client.go` (`WithCheckingDisabled`).
+
+**Why it matters.** A validating recursive resolver answers SERVFAIL for data it judges bogus, so a caller that validates by itself never sees the data or learns why. With the CD bit (RFC 4035 §3.2.2) the resolver returns the data and the caller's verifier decides.
+
+**API surface (Go).**
+
+```go
+const FlagCD uint16 = 0x0010
+type QueryOptions struct{ CheckingDisabled bool }
+func BuildQueryWithOptions(id uint16, qname string, qtype uint16, opts QueryOptions) ([]byte, error)
+// package doh and package auth (and later dot):
+func WithCheckingDisabled(cd bool) Option
+```
+
+**Behaviour.** Off by default; `BuildQueryWithID` delegates with zero options, so existing queries are byte-identical. The DoH client's `Query` uses `BuildQueryWithOptions(RandomQueryID(), …)`. Tests check that CD changes only the header and that each client puts it on the wire.
+
+**TS migration notes.** `FLAG_CD`, `QueryOptions { checking_disabled? }`, `build_query_with_options`; `checking_disabled` on `DoHClientOptions` and `AuthClientOptions`.
+
+**Tracking:** landed-upstream in dnsdata-js `2a8e6f7`.
+
+---
+
+## UP-017
+
+### TLSA / SMIMEA and SVCB / HTTPS presentation
+
+**Go source:** `wire/rdata_svcb.go` (`decodeTLSA`, `decodeSVCB`), cases in `wire/rdata.go::RDataToString`.
+
+**Why it matters.** These types came out of `RDataToString` in the RFC 3597 generic form, which round-trips but is unreadable in logs and reports, and is not what other tools print.
+
+**Behaviour.** TLSA / SMIMEA: `usage selector matching-type hex` (RFC 6698 §2.2, RFC 8162 §2). SVCB / HTTPS: `priority target key=value ...` (RFC 9460 §2.1) with the registered mnemonics and `keyNNNNN`, the latter with a hex value — the form `zone.ParseSVCB` reads. RDATA that form would not reproduce octet for octet stays generic: keys out of order, an ALPN id with `,`, `"`, `\`, whitespace or non-ASCII, an IPv4-mapped `ipv6hint`, a target the parser would rewrite (upper case, compression), empty TLSA certificate data. Malformed RDATA also stays generic instead of failing, so one bad record does not fail a resolver response. The round-trip property (wire → presentation → `NewResourceRecord` → wire) holds for every shared vector; new vectors "SVCB all keys", "SVCB keys out of order", "TLSA empty data".
+
+**TS migration notes.** `rdata_to_string` gains the same cases (`wire/rdata_svcb.ts`); `zone/generic.ts::tlsa_presentation` is replaced by it. Assert the same bytes and strings as `wire/rdata_svcb_test.go`.
+
+**Tracking:** landed-upstream in dnsdata-js `4a08085`.
+
+---
+
+## UP-018
+
+### NSEC3 signing and NSEC3 proofs from the in-memory authority
+
+**Go source:** `dnssec/signer/nsec3.go` (`NSEC3Options`, `BuildNSEC3`), `dnssec/signer/sign.go` (`Options.NSEC3`, chain-record signing), `resolver/memory/nsec3.go` and `resolver/memory/answer.go` (proofs).
+
+**Why it matters.** Most signed zones use NSEC3, and the verifier's NSEC3 paths could only be tested with hand-built records. Signing with NSEC3 and answering with NSEC3 proofs lets those paths run end to end offline, opt-out included.
+
+**API surface (Go).**
+
+```go
+type NSEC3Options struct {
+    Iterations uint16
+    Salt       []byte
+    OptOut     bool
+}
+type Options struct {
+    // …existing fields…
+    NSEC3 *NSEC3Options // nil: NSEC (default); &NSEC3Options{}: RFC 9276
+}
+func BuildNSEC3(z *zone.Zone, apex string, ttl uint32, params NSEC3Options) ([]*zone.ResourceRecord, error)
+```
+
+**Behaviour.** One NSEC3 per authoritative name and per empty non-terminal above one, owned by the base32hex hash under the apex, linked in hash order and closed into a ring, plus an NSEC3PARAM at the apex (flags 0). The bitmap lists the types at the name (only NS and DS at a delegation), RRSIG only where the name has a signed RRset, and NSEC3PARAM at the apex; an empty non-terminal's is empty. With `OptOut`, delegations without DS (and empty non-terminals only above them) leave the chain and every NSEC3 has the flag. TTL is the RFC 9077 one, as for NSEC. A hash collision is an error. Every NSEC3 and the NSEC3PARAM are signed. BIND's `dnssec-verify` accepts both profiles.
+
+The memory authority, for a zone with NSEC3 records, answers with RFC 5155 §7.2 proofs: the matching NSEC3 for NODATA, an empty non-terminal and a delegation without DS; the closest provable encloser proof where no NSEC3 matches (opt-out); the closest encloser proof plus the wildcard cover for NXDOMAIN; the next-closer cover for a wildcard answer, with the encloser and wildcard match for wildcard NODATA. NSEC zones get the answers they always did.
+
+**Acceptance.** The hierarchy verdict table runs against NSEC3 (RFC 9276, and salt with iterations) with the same verdicts as NSEC. Under opt-out, names whose next closer name is only covered come out Insecure with an opt-out reason (RFC 5155 §9.2: they may be insecure delegations), names with a matching NSEC3 stay Secure.
+
+**TS migration notes.** `SignOptions.nsec3?: NSEC3Options` (`iterations`, `salt`, `optOut`), `signer.build_nsec3`; the memory authority's `ZoneIndex` keeps an NSEC3 chain. Same verdict table.
+
+**Tracking:** landed-upstream in dnsdata-js `0e76011`.
+
+---
+
+## UP-019
+
+### DNS-over-TLS client
+
+**Go source:** `resolver/dot/` (`client.go`, `errors.go`); `resolver/internal/stream` (length framing, shared with `resolver/auth`'s TCP path) and `resolver/internal/message` (response → `resolver.Response`, shared by auth, DoH and DoT).
+
+**Why it matters.** Some networks block or intercept port 53 and some callers need an encrypted, authenticated channel to a chosen resolver without HTTP. DoT is the plain-DNS counterpart of the DoH client.
+
+**API surface (Go).**
+
+```go
+package dot
+
+const DefaultPort = "853"
+const DefaultTimeout = 5 * time.Second
+var ErrDoT, ErrNoServers, ErrAllServersFailed, ErrResponseTooShort, ErrIDMismatch, ErrResolverResponse error
+type Option func(*Client)
+func WithServers(addrs ...string) Option
+func WithTLSConfig(cfg *tls.Config) Option
+func WithTimeout(d time.Duration) Option
+func WithCheckingDisabled(cd bool) Option
+func NewClient(opts ...Option) *Client
+func (c *Client) Servers() []string
+func (c *Client) Query(ctx context.Context, qname string, qtype uint16) ([]byte, error)
+func (c *Client) QueryRaw(ctx context.Context, queryID uint16, query []byte) ([]byte, error)
+func (c *Client) Resolve(ctx context.Context, name string, qtype uint16) (resolver.Response, error)
+func NormalizeAddr(addr string) string
+```
+
+**Behaviour.** Each query opens a TLS connection (one per query; no reuse yet), writes the length-prefixed query in one write (RFC 7766 §8) and reads one response. The server is authenticated as in RFC 8310's strict profile: the certificate chains to a trusted root (`RootCAs` for a private CA) and matches the configured `ServerName` or the host dialed (an IP address is checked against IP SANs); TLS 1.2 or later. Servers are tried in order; the error of an all-fail run joins `ErrAllServersFailed` with the first failure. A non-zero RCODE is data. The auth client's TCP path now uses the same framing, so prefix and query go in one write there too; its results and errors are otherwise unchanged.
+
+**TS migration notes.** `DoTClient` over Node's `tls` with `rejectUnauthorized`, `minVersion: 'TLSv1.2'`, no SNI for an address; options `servers`, `tls` (`ca`, `servername`), `timeout_ms`, `checking_disabled`; errors as `DoTResolverError` subclasses. Node cannot create certificates, so the TS tests use a self-signed test certificate as a fixture.
+
+**Tracking:** landed-upstream in dnsdata-js `b338bc2`.
 
 ---
 
