@@ -1,6 +1,8 @@
 package memory
 
 import (
+	"strings"
+
 	"github.com/shigeya/dnsdata-go/resolver"
 	"github.com/shigeya/dnsdata-go/types"
 	"github.com/shigeya/dnsdata-go/zone"
@@ -26,9 +28,26 @@ func (idx *zoneIndex) answer(name string, qtype uint16) resolver.Response {
 		return response(rcodeNoError, idx.coveringNSEC(name))
 	}
 	if owner := idx.dnameAbove(name); owner != "" {
-		return response(rcodeNoError, idx.withSigs(owner, types.TypeDNAME))
+		return idx.dnameAnswer(name, owner)
 	}
 	return idx.missing(name, qtype)
+}
+
+// dnameAnswer answers a name below the DNAME at owner: the signed DNAME
+// and the CNAME synthesised from it (RFC 6672 §5.3.1), owned by name,
+// unsigned, with the DNAME's TTL.
+func (idx *zoneIndex) dnameAnswer(name, owner string) resolver.Response {
+	dname := idx.withSigs(owner, types.TypeDNAME)
+	target := normalize(idx.rrset(owner, types.TypeDNAME)[0].Value)
+	prefix := labels(name)[:len(labels(name))-len(labels(owner))]
+	synthesised := &zone.ResourceRecord{
+		Label: name,
+		TTL:   dname[0].TTL,
+		Class: dname[0].Class,
+		Type:  types.TypeCNAME,
+		Value: strings.Join(append(prefix, labels(target)...), ".") + ".",
+	}
+	return response(rcodeNoError, append(dname, synthesised))
 }
 
 // referral answers a name at or below a delegation point: the NS
@@ -59,6 +78,8 @@ func (idx *zoneIndex) existing(name string, qtype uint16) resolver.Response {
 
 // missing answers a name that does not exist: wildcard synthesis when
 // `*.<closest encloser>` exists (RFC 4035 §3.1.3.3), NXDOMAIN otherwise.
+// A wildcard CNAME is synthesised for a query of any type
+// (RFC 4592 §3.3.3).
 func (idx *zoneIndex) missing(name string, qtype uint16) resolver.Response {
 	ce := idx.closestEncloser(name)
 	wildcard := wildcardOf(ce)
@@ -68,6 +89,9 @@ func (idx *zoneIndex) missing(name string, qtype uint16) resolver.Response {
 	}
 	proof := idx.coveringNSEC(nextCloser(name, ce))
 	rs := idx.withSigs(wildcard, qtype)
+	if len(rs) == 0 && qtype != types.TypeCNAME {
+		rs = idx.withSigs(wildcard, types.TypeCNAME)
+	}
 	if len(rs) == 0 {
 		return response(rcodeNoError, append(proof, idx.withSigs(wildcard, types.TypeNSEC)...))
 	}

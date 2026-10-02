@@ -129,27 +129,14 @@ func dnameAtApex(t *testing.T, c *twoBranchChain) []*zone.ResourceRecord {
 	)
 }
 
-// TestValidate_DNAME_WithSynthesisedCNAME_Authoritative: the answer
-// for www.example.com./TXT carries the DNAME at the apex and the
-// CNAME synthesised from it, which has no RRSIG (RFC 6672 §5.3.1). The
-// CNAME must not be validated on its own; the DNAME is what is signed.
-func TestValidate_DNAME_WithSynthesisedCNAME_Authoritative(t *testing.T) {
-	c := newTwoBranchChain(t)
-	dnameAnswer := dnameAtApex(t, c)
-
-	resp := c.responses()
-	resp[lookupKey{"www.example.com.", types.TypeTXT}] = dnameAnswer
-	resp[lookupKey{"www.example.com.", types.TypeDS}] = dnameAnswer
-	resp[lookupKey{"www.example.net.", types.TypeTXT}] = rrsetWithSigs(c.dst.z, "www.example.net.", types.TypeTXT)
-
-	res := c.validate(t, resp, "www.example.com.", types.TypeTXT)
-	// From is the DNAME owner, not the queried name.
-	assertSecureAlias(t, res, "dname", "example.com.", "www.example.net.", types.TypeTXT)
-}
+// The authoritative shape (the DNAME plus the unsigned CNAME
+// synthesised from it, RFC 6672 §5.3.1) is validated end to end against
+// the in-memory authority in resolver/memory TestHierarchy_AliasVerdicts.
 
 // TestValidate_DNAME_RecursiveResponse: a recursive resolver follows
 // the DNAME itself and puts the target's TXT (owner www.example.net.)
-// into the same answer.
+// into the same answer, next to the DNAME and the synthesised CNAME.
+// From is the DNAME owner, not the queried name.
 func TestValidate_DNAME_RecursiveResponse(t *testing.T) {
 	c := newTwoBranchChain(t)
 	dnameAnswer := dnameAtApex(t, c)

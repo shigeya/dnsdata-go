@@ -23,6 +23,10 @@ this project adheres to [Semantic Versioning](https://semver.org/).
   instead of the name queried in that hop. CNAME hops are unchanged
   (the owner is the queried name). The queried name of a hop is the
   previous hop's `Target`.
+- `resolver/memory` answers aliases as real authoritative servers do:
+  a wildcard CNAME is synthesised for queries of any type (RFC 4592
+  §3.3.3), not only CNAME; and a DNAME answer carries the unsigned
+  CNAME synthesised from it (RFC 6672 §5.3.1).
 
 ## [0.7.0] — 2026-09-24
 
