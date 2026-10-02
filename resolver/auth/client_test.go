@@ -138,6 +138,28 @@ func startUDPAndTCPListener(t *testing.T, name string, rrtype uint16, ttl uint32
 
 // --- Tests --------------------------------------------------------------
 
+// WithCheckingDisabled sets the CD bit on the query sent to the server;
+// it is clear by default.
+func TestClient_WithCheckingDisabled(t *testing.T) {
+	for _, cd := range []bool{false, true} {
+		flags := make(chan uint16, 1)
+		addr := startUDPListener(t, func(query []byte) []byte {
+			flags <- binary.BigEndian.Uint16(query[2:4])
+			return buildResponseTo(t, query, "example.com.", types.TypeA, 300, []byte{192, 0, 2, 1}, false)
+		})
+		opts := []auth.Option{auth.WithServers(addr), auth.WithTimeout(2 * time.Second)}
+		if cd {
+			opts = append(opts, auth.WithCheckingDisabled(true))
+		}
+		if _, err := auth.NewClient(opts...).Query(context.Background(), "example.com.", types.TypeA); err != nil {
+			t.Fatalf("cd=%v: Query: %v", cd, err)
+		}
+		if got := <-flags&wire.FlagCD != 0; got != cd {
+			t.Errorf("CD bit on the wire = %v, want %v", got, cd)
+		}
+	}
+}
+
 func TestClient_Query_NoServers(t *testing.T) {
 	c := auth.NewClient()
 	_, err := c.Query(context.Background(), "example.com.", types.TypeA)

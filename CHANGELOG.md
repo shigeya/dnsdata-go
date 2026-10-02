@@ -6,6 +6,14 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `wire.FlagCD`, `wire.QueryOptions` and `wire.BuildQueryWithOptions`:
+  a query with the CD (checking disabled) bit, RFC 4035 §3.2.2.
+  `doh.WithCheckingDisabled` and `auth.WithCheckingDisabled` set it on
+  every query, so a validating upstream returns data it would reject
+  as bogus instead of SERVFAIL. Off by default; queries are unchanged.
+
 ### Changed
 
 - TXT character-strings and the CAA value use RFC 1035 §5.1 escapes in

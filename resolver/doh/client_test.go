@@ -3,6 +3,7 @@ package doh_test
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"io"
 	"net/http"
@@ -54,6 +55,33 @@ func newStubProvider(t *testing.T) (*httptest.Server, string) {
 
 func newClient(opts ...doh.Option) *doh.Client {
 	return doh.NewClient(append(opts, doh.WithHTTPClient(&http.Client{Timeout: 2 * time.Second}))...)
+}
+
+// WithCheckingDisabled sets the CD bit on the query POSTed to the
+// provider; it is clear by default.
+func TestClient_WithCheckingDisabled(t *testing.T) {
+	for _, cd := range []bool{false, true} {
+		flags := make(chan uint16, 1)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			body, _ := io.ReadAll(r.Body)
+			if len(body) >= 4 {
+				flags <- binary.BigEndian.Uint16(body[2:4])
+			}
+			w.Header().Set("Content-Type", doh.MediaType)
+			_, _ = w.Write(stubResponse)
+		}))
+		t.Cleanup(srv.Close)
+		opts := []doh.Option{doh.WithProviders(srv.URL)}
+		if cd {
+			opts = append(opts, doh.WithCheckingDisabled(true))
+		}
+		if _, err := newClient(opts...).Query(context.Background(), "example.com.", types.TypeA); err != nil {
+			t.Fatalf("cd=%v: Query: %v", cd, err)
+		}
+		if got := <-flags&wire.FlagCD != 0; got != cd {
+			t.Errorf("CD bit on the wire = %v, want %v", got, cd)
+		}
+	}
 }
 
 func TestClient_Query_ReturnsResponseBytes(t *testing.T) {

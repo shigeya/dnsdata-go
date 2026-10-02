@@ -20,6 +20,9 @@ const (
 	// FlagRD is the "recursion desired" header bit.
 	FlagRD uint16 = 0x0100
 
+	// FlagCD is the "checking disabled" header bit (RFC 4035 §3.2.2).
+	FlagCD uint16 = 0x0010
+
 	// optType is the IANA OPT pseudo-RR type code (RFC 6891 §6.1.2).
 	optType uint16 = 41
 
@@ -46,15 +49,33 @@ func BuildQuery(qname string, qtype uint16) ([]byte, error) {
 // tests and protocols that need to correlate a specific transaction
 // ID with a response set it explicitly.
 func BuildQueryWithID(id uint16, qname string, qtype uint16) ([]byte, error) {
+	return BuildQueryWithOptions(id, qname, qtype, QueryOptions{})
+}
+
+// QueryOptions adjusts the query [BuildQueryWithOptions] builds. The
+// zero value builds what [BuildQueryWithID] does.
+type QueryOptions struct {
+	// CheckingDisabled sets the CD bit (RFC 4035 §3.2.2), asking a
+	// validating upstream to return data it would reject as bogus
+	// instead of SERVFAIL, so the caller can validate it itself.
+	CheckingDisabled bool
+}
+
+// BuildQueryWithOptions is [BuildQueryWithID] with header options.
+func BuildQueryWithOptions(id uint16, qname string, qtype uint16, opts QueryOptions) ([]byte, error) {
 	nameWire, err := DomainNameToWire(ensureFQDN(qname))
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidQName, err)
+	}
+	flags := FlagRD
+	if opts.CheckingDisabled {
+		flags |= FlagCD
 	}
 
 	// Header (12 bytes): id, flags, qd=1, an=0, ns=0, ar=1 (the OPT).
 	buf := make([]byte, 0, 12+len(nameWire)+4+11)
 	buf = binary.BigEndian.AppendUint16(buf, id)
-	buf = binary.BigEndian.AppendUint16(buf, FlagRD)
+	buf = binary.BigEndian.AppendUint16(buf, flags)
 	buf = binary.BigEndian.AppendUint16(buf, 1) // QDCOUNT
 	buf = binary.BigEndian.AppendUint16(buf, 0) // ANCOUNT
 	buf = binary.BigEndian.AppendUint16(buf, 0) // NSCOUNT

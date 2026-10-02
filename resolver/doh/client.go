@@ -45,6 +45,7 @@ type Client struct {
 	httpClient *http.Client
 	providers  []string
 	userAgent  string
+	queryOpts  wire.QueryOptions
 }
 
 // Option configures a [Client] at construction time.
@@ -75,6 +76,14 @@ func WithUserAgent(ua string) Option {
 	return func(c *Client) { c.userAgent = ua }
 }
 
+// WithCheckingDisabled sets the CD bit on every query (RFC 4035
+// §3.2.2), so a validating provider returns data it would reject as
+// bogus instead of SERVFAIL and the caller can validate it itself.
+// Off by default.
+func WithCheckingDisabled(cd bool) Option {
+	return func(c *Client) { c.queryOpts.CheckingDisabled = cd }
+}
+
 // NewClient constructs a [Client] with the supplied options. A default
 // HTTP client (10s timeout, no proxy beyond the environment) is used
 // when none is supplied.
@@ -99,7 +108,7 @@ func (c *Client) Providers() []string {
 // bit set. The response is the raw DNS message bytes from the first
 // provider that succeeds.
 func (c *Client) Query(ctx context.Context, qname string, qtype uint16) ([]byte, error) {
-	query, err := wire.BuildQuery(qname, qtype)
+	query, err := wire.BuildQueryWithOptions(wire.RandomQueryID(), qname, qtype, c.queryOpts)
 	if err != nil {
 		return nil, err
 	}

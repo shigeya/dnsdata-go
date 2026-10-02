@@ -33,6 +33,7 @@ type Client struct {
 	timeout    time.Duration
 	udpBufSize int
 	dial       dialer // injectable for tests
+	queryOpts  wire.QueryOptions
 }
 
 // dialer abstracts net.Dialer so tests can swap in fake network
@@ -81,6 +82,14 @@ func WithUDPBufferSize(n int) Option {
 	}
 }
 
+// WithCheckingDisabled sets the CD bit on every query (RFC 4035
+// §3.2.2), so a validating server returns data it would reject as
+// bogus instead of SERVFAIL and the caller can validate it itself.
+// Off by default.
+func WithCheckingDisabled(cd bool) Option {
+	return func(c *Client) { c.queryOpts.CheckingDisabled = cd }
+}
+
 // WithDialer is an internal option to inject a custom dialer.
 // Exported for tests only via the test-helper convention; production
 // callers should not touch it.
@@ -114,7 +123,7 @@ func (c *Client) Servers() []string {
 // [wire.ParseMessage]).
 func (c *Client) Query(ctx context.Context, qname string, qtype uint16) ([]byte, error) {
 	queryID := wire.RandomQueryID()
-	msg, err := wire.BuildQueryWithID(queryID, qname, qtype)
+	msg, err := wire.BuildQueryWithOptions(queryID, qname, qtype, c.queryOpts)
 	if err != nil {
 		return nil, err
 	}

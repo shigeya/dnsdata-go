@@ -9,6 +9,34 @@ import (
 	"github.com/shigeya/dnsdata-go/types"
 )
 
+// CheckingDisabled sets the CD header bit (RFC 4035 §3.2.2) and nothing
+// else; the zero options build the same bytes as BuildQueryWithID.
+func TestBuildQueryWithOptions_CD(t *testing.T) {
+	plain, err := BuildQueryWithID(0x1234, "example.com.", types.TypeA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, cd := range []bool{false, true} {
+		q, err := BuildQueryWithOptions(0x1234, "example.com.", types.TypeA, QueryOptions{CheckingDisabled: cd})
+		if err != nil {
+			t.Fatalf("cd=%v: %v", cd, err)
+		}
+		want := FlagRD
+		if cd {
+			want |= FlagCD
+		}
+		if got := binary.BigEndian.Uint16(q[2:4]); got != want {
+			t.Errorf("cd=%v: flags %#04x, want %#04x", cd, got, want)
+		}
+		if string(q[4:]) != string(plain[4:]) {
+			t.Errorf("cd=%v: bytes after the flags differ from BuildQueryWithID", cd)
+		}
+	}
+	if FlagCD != 0x0010 {
+		t.Errorf("FlagCD = %#04x, want 0x0010", FlagCD)
+	}
+}
+
 func TestBuildQuery_HeaderLayout(t *testing.T) {
 	msg, err := BuildQueryWithID(0x4242, "example.com.", types.TypeA)
 	if err != nil {
