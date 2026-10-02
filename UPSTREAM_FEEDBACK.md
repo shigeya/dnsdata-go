@@ -44,6 +44,7 @@ DESIGN.md change.
 | [UF-004](#uf-004) | `ResourceRecord.get_wire_body` silently emits nothing when RDATA parse fails | `dns_zone.ts:175-295` | robustness | [fixed-upstream (#15)](https://github.com/shigeya/dnsdata-js/pull/15) |
 | [UF-005](#uf-005) | RRSIG digest target sorts RRset members with their RDLENGTH prefix and keeps duplicates; RFC 4034 §6.3 orders by RDATA alone and removes duplicates | `dnssec/dnssec_zone.ts:98-105` | bug | fixed-upstream (dnsdata-js `4dffc7a`) |
 | [UF-006](#uf-006) | RRSIG inception / expiration never checked; an expired signature validates | `dnssec/dnssec_zone.ts`, `verifier/` | bug | fixed-upstream (dnsdata-js `4dffc7a`) |
+| [UF-007](#uf-007) | DNAME answers and alias answers from recursive resolvers are Bogus; wildcard NODATA and empty non-terminals are not proven as NODATA | `verifier/chain.ts:272,363`, `verifier/leaf_negative.ts` | bug | pending |
 
 UF status legend:
 
@@ -271,6 +272,27 @@ The same section requires duplicate RRs to be removed. Without that, an RRset th
 **Recommended TS fix.** Add an optional clock to `DNSSECZone` and pass the verifier's `now` into every zone the chain walker creates.
 
 **Tracking:** fixed-upstream in dnsdata-js `4dffc7a` (`DNSSecZone.set_clock`; the verifier's `now` option now takes effect).
+
+---
+
+## UF-007
+
+### Alias answers and wildcard / empty non-terminal NODATA
+
+**TS source:** `packages/core/src/verifier/chain.ts` (leaf step at :272, record count at :363), `packages/core/src/verifier/leaf_negative.ts`. The code was ported from Go (UP-004 / UP-005), and Go had the same four defects until this fix. They were found by validating against BIND 9.20 (authoritative) and Unbound 1.25 (recursive), with delv as the reference.
+
+**Problem.**
+
+1. *DNAME answers are Bogus.* The leaf step tries CNAME before DNAME. A DNAME answer carries the CNAME the server synthesised from it, which has no RRSIG (RFC 6672 §5.3.1), so the CNAME check fails and the signed DNAME is never reached.
+2. *Alias answers through a recursive resolver are Bogus.* The record count compares types only. A recursive resolver puts the alias target's RRset (same type, other owner) into the same answer, so the count is non-zero and the walker verifies a qname RRset that does not exist.
+3. *Wildcard NODATA and empty non-terminal NODATA are classified as NXDOMAIN.* The NXDOMAIN proof accepts an NSEC *matching* `*.<ce>` as a denial of the wildcard, although a match proves the wildcard exists; and a covering NSEC whose next name is below qname (qname is an empty non-terminal) passes as an NXDOMAIN cover. The rcode of both answers is NOERROR.
+4. *NSEC3 wildcard NODATA is Indeterminate.* There is no RFC 5155 §8.7 proof (closest-encloser proof plus an NSEC3 matching `*.<ce>` without qtype).
+
+**Go-side handling.** `verifier/chain.go::resolveLeaf` tries DNAME first and derives the target from the DNAME; the synthesised CNAME is not used. `applyRecords` counts only records owned by the queried name. `verifier/leaf_negative.go`: `proveNoDataWithNSEC` accepts the empty non-terminal and wildcard NODATA shapes, `proveNoDataWithNSEC3` accepts wildcard NODATA, and the NXDOMAIN proofs reject both (wildcard must be covered, not matched; next name must not be below qname). Tests: `verifier/alias_shapes_test.go`, `verifier/negative_shapes_test.go`, and two rows in `resolver/memory/memory_test.go::TestHierarchy_Verdicts`.
+
+**Recommended TS fix.** Mirror the Go change in `chain.ts` (swap `try_cname` / `try_dname`, compare the owner in the count) and `leaf_negative.ts`, and port the tests.
+
+**Tracking:** pending.
 
 ---
 
