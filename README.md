@@ -18,9 +18,10 @@ parallel — see [`docs/SIBLING.md`](docs/SIBLING.md). Both descend from
 
 ## Status
 
-v0.7.0 — full end-to-end DNSSEC chain validation with NSEC / NSEC3
+v0.8.0 — full end-to-end DNSSEC chain validation with NSEC / NSEC3
 negative-proof support, CNAME / DNAME chasing, and wildcard-synthesised
-positive answer validation. Both DoH and plain UDP / TCP transports.
+positive answer validation. DoH, DNS-over-TLS and plain UDP / TCP
+transports.
 The default DoH provider order is **Cloudflare → Google → Quad9**
 (see `resolver/doh` package doc for the rationale). Pre-release: API
 surface may still change before v1.0. Primary consumer is

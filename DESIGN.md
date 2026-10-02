@@ -280,6 +280,7 @@ release; [`CHANGELOG.md`](CHANGELOG.md) has the detail and
 | v0.4.0 | Pluggable verifier `Cache` with `MemoryCache` (§4 SHOULD #13) | UP-008 |
 | v0.6.0 | `resolver.Response{Records, AD, RCode}`; non-zero RCODE is data, not an error (breaking) | UP-009 |
 | v0.7.0 | RFC 3597 unknown types and shared round-trip vectors; strict zone reader; canonical output; `dnssec/signer`; `resolver/memory` with shared signed vectors; `Result.Answer`; RRSIG validity window enforced; RRSIG digest target ordered by RDATA alone | UP-010 – UP-015, UF-005, UF-006 |
+| v0.8.0 | CD bit on queries; TLSA / SMIMEA / SVCB / HTTPS presented by type; `\DDD` escapes for TXT and CAA; NSEC3 signing and NSEC3 proofs from `resolver/memory`; `resolver/dot`; received RDATA signed as is (`zone.NewResourceRecordWithRData`); DNAME, alias and wildcard NODATA verdicts fixed | UP-016 – UP-019, UF-007 |
 | Unreleased | DNAME and recursive-resolver alias answers validate; wildcard and empty-non-terminal NODATA proven as NODATA; `AliasStep.From` of a DNAME hop is the DNAME owner | UF-007 |
 
 The DoH client (UP-007) shipped in v0.1.0 and its dnsdata-js port

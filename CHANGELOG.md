@@ -6,6 +6,19 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-10-03
+
+Transports and signing: a DNS-over-TLS client, the CD bit on queries,
+NSEC3 signing with NSEC3 proofs from the in-memory authority (UP-016 –
+UP-019). No API is removed or changed in shape, but presentation and
+verdicts change: TLSA / SMIMEA / SVCB / HTTPS RDATA is presented by
+type instead of `\#`, TXT and CAA use `\DDD` escapes, and alias and
+negative-proof fixes (UF-007, DNAME under opt-out NSEC3) change the
+verdict of DNAME answers, alias answers from recursive resolvers and
+wildcard NODATA. Answers the clients received now sign as the octets
+they arrived as, so TLSA / SVCB validation needs no zone handlers.
+Coordinated release with dnsdata-js v0.8.0.
+
 ### Added
 
 - `zone.NewResourceRecordWithRData`: a record with its presentation
