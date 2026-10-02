@@ -2,8 +2,10 @@ package memory_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
+	"github.com/shigeya/dnsdata-go/dnssec/signer"
 	"github.com/shigeya/dnsdata-go/types"
 	"github.com/shigeya/dnsdata-go/verifier"
 	"github.com/shigeya/dnsdata-go/zone"
@@ -103,6 +105,44 @@ func TestHierarchy_AliasVerdicts(t *testing.T) {
 			}
 			if a := res.Aliases[0]; a.Type != tc.aliasType || a.From != tc.from || a.Target != tc.target {
 				t.Errorf("alias = %+v, want %s %s → %s", a, tc.aliasType, tc.from, tc.target)
+			}
+		})
+	}
+}
+
+// A name below a DNAME cannot be a zone cut (RFC 6672 §2.4), so the
+// walker must not prove "no DS" for it from an opt-out NSEC3 that
+// happens to cover its hash; that NSEC3 arrived as the denial for the
+// DNAME owner itself. The DNAME hop is followed, and the target, which
+// does not exist, is denied under opt-out: Insecure at the target, as
+// for an explicit CNAME. The zone has few names, so that each NSEC3
+// covers a wide range, and many names are tried, because whether the
+// NSEC3 covers a name's hash depends on the name.
+func TestHierarchy_DNAMEUnderOptOut(t *testing.T) {
+	const sparseLeafText = `$ORIGIN example.test.
+$TTL 3600
+@        SOA   ns1.example.test. hostmaster.example.test. 1 7200 3600 1209600 300
+@        NS    ns1.example.test.
+ns1      A     192.0.2.1
+old      DNAME new.example.test.
+www.new  TXT   "moved"
+`
+	optOut := &signer.NSEC3Options{OptOut: true}
+	h := buildHierarchyWith(t, optOut)
+	leaf := signWith(t, readZone(t, sparseLeafText), "example.test.", h.leafKeys,
+		signer.Options{Inception: inception, Expiration: expiration, NSEC3: optOut})
+	v := newVerifier(t, h, newAuthority(t, h, leaf), now)
+	for i := range 32 {
+		qname := fmt.Sprintf("n%d.old.example.test.", i)
+		target := fmt.Sprintf("n%d.new.example.test.", i)
+		t.Run(qname, func(t *testing.T) {
+			res := validate(t, v, qname, types.TypeTXT)
+			if len(res.Aliases) != 1 || res.Aliases[0].Type != "dname" || res.Aliases[0].Target != target {
+				t.Fatalf("Aliases = %+v (verdict %v, insecure %q at %q), want the DNAME hop to %s",
+					res.Aliases, res.Verdict, res.InsecureReason, res.InsecureAt, target)
+			}
+			if res.Verdict != verifier.VerdictInsecure || res.InsecureAt != target {
+				t.Errorf("verdict %v at %q, want Insecure at %s", res.Verdict, res.InsecureAt, target)
 			}
 		})
 	}

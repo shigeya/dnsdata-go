@@ -87,6 +87,13 @@ this project adheres to [Semantic Versioning](https://semver.org/).
   unless the caller had registered them, and validation ended
   `indeterminate` ("no encoder"). Shared vector `testdata/handlers` in
   `verifier/`.
+- A name below a DNAME in a zone signed with opt-out NSEC3 follows the
+  DNAME. The walker asked for DS at every ancestor of the query name
+  and took an opt-out NSEC3 that happened to cover the name's hash
+  (sent as the denial for the DNAME owner) as proof of an unsigned
+  delegation, so the verdict was Insecure at the query name with no
+  DNAME hop. A name below a DNAME is never a zone cut (RFC 6672 §2.4;
+  RFC 6840 §4.1), so no "no DS" proof is sought for it.
 
 ## [0.7.0] — 2026-09-24
 

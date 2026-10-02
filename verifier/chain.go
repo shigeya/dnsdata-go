@@ -356,6 +356,12 @@ func (v *Verifier) descendInto(ctx context.Context, parentZone *dnssec.Zone, par
 		return nil, nil, descendBogus, err
 	}
 	if dsCount == 0 {
+		if belowDNAME(parentZone, childName) {
+			// A name below a DNAME is never a zone cut (RFC 6672 §2.4),
+			// and denial records for the DNAME owner say nothing about
+			// it (RFC 6840 §4.1). Leaf resolution follows the DNAME.
+			return nil, nil, descendNoCut, nil
+		}
 		if proven, reason := v.proveNoDS(parentZone, childName); proven {
 			result.InsecureReason = reason
 			return nil, nil, descendInsecure, nil
@@ -400,6 +406,21 @@ func (v *Verifier) descendInto(ctx context.Context, parentZone *dnssec.Zone, par
 		return nil, nil, descendBogus, nil
 	}
 	return childZone, childKSK, descendDescended, nil
+}
+
+// belowDNAME reports whether z holds a DNAME at a proper ancestor of
+// name. Whether it verifies is left to leaf resolution: skipping a
+// no-DS proof can only make the verdict stricter.
+func belowDNAME(z *dnssec.Zone, name string) bool {
+	for _, anc := range ancestorsOf(name) {
+		if dnssec.EqualCanonicalNames(anc, name) {
+			continue
+		}
+		if len(z.FindRRSet(anc, types.TypeDNAME)) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // validateRoot loads the root DNSKEY rrset, matches it against the
