@@ -29,8 +29,10 @@ var ErrRData = errors.New("dns rdata decode")
 //
 // Types currently handled: A, AAAA, NS, CNAME, PTR, DNAME, MX, TXT,
 // SOA, SRV, CAA, DNSKEY, CDNSKEY, DS, CDS, RRSIG, NSEC, NSEC3,
-// NSEC3PARAM. Anything else returns the RFC 3597 §5 unknown-type
-// generic form `\# <rdlen> <hex>`.
+// NSEC3PARAM, TLSA, SMIMEA, SVCB, HTTPS. Anything else returns the
+// RFC 3597 §5 unknown-type generic form `\# <rdlen> <hex>`, as do
+// TLSA / SVCB RDATA that is malformed or that the zone parser could
+// not read back.
 func RDataToString(msg []byte, rrtype uint16, rdata []byte, rdataStart int) (string, error) {
 	switch rrtype {
 	case types.TypeA:
@@ -61,6 +63,10 @@ func RDataToString(msg []byte, rrtype uint16, rdata []byte, rdataStart int) (str
 		return decodeNSEC3(rdata)
 	case types.TypeNSEC3PARAM:
 		return decodeNSEC3PARAM(rdata)
+	case types.TypeTLSA, types.TypeSMIMEA:
+		return decodeTLSA(rdata), nil
+	case types.TypeSVCB, types.TypeHTTPS:
+		return decodeSVCB(rdata), nil
 	}
 	return FormatGenericRData(rdata), nil
 }

@@ -25,6 +25,16 @@ this project adheres to [Semantic Versioning](https://semver.org/).
   previously `\065` read as `065`. A `\DDD` above 255 is an error. A
   CAA value with escaped quotes now round-trips. Shared vectors
   "TXT control and invalid UTF-8" and "CAA non-ASCII and escapes".
+- `RDataToString` writes TLSA and SMIMEA as `usage selector
+  matching-type hex`, and SVCB and HTTPS as `priority target
+  key=value ...` (the RFC 9460 mnemonics and `keyNNNNN`, the latter
+  with a hex value) instead of the generic `\# <len> <hex>`. Both read
+  back through `zone.NewResourceRecord` to the same octets; RDATA that
+  would not (keys out of order, an ALPN id with `,` or non-ASCII, an
+  IPv4-mapped `ipv6hint`, an uppercase target, empty TLSA data) is
+  still generic, as is malformed RDATA, so it is not an error. Shared
+  vectors "SVCB all keys", "SVCB keys out of order" and "TLSA empty
+  data".
 
 ### Fixed
 
