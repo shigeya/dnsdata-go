@@ -1601,7 +1601,7 @@ dnsview -server ADDR [-type A,AAAA] [-anchors FILE] [-cd] [-timeout 10s] NAME...
 - `-server` is required (no default server). `ip` or `ip:port`; port 53 by default. The `server` field carries the normalised `ip:port`.
 - Transport is the auth client only: UDP, retried over TCP when truncated. No DoH / DoT.
 - `-type`: comma-separated; each item is upper-cased and passed to `types.StringToRRType`, so mnemonics and `TYPE<n>` work in any case. Default `A`.
-- `-anchors`: a root-anchors JSON file (`dnssec.ReadAnchors`); without it `dnssec.BuiltinRootAnchors()`. Nothing under `~/.dnsdata-go/` is read implicitly.
+- `-anchors`: a root-anchors JSON file (`dnssec.ReadAnchors`); without it `dnssec.BuiltinRootAnchors()`. Nothing under `~/.dnsdata/` is read implicitly.
 - `-cd`: the CD bit (`auth.WithCheckingDisabled`). `-timeout`: per query, default 10s.
 
 **Output.** JSON Lines, one per (NAME, type) in argument order:
