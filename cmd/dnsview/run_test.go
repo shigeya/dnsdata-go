@@ -211,6 +211,54 @@ func TestRun_ResultIsVerifierResultAsIs(t *testing.T) {
 	}
 }
 
+// NAME goes to Validate as typed. The verifier lower-cases it and adds
+// the trailing dot, so any spelling gives the verdict and the result of
+// the canonical name; query.name echoes the spelling given.
+func TestRun_NameSpellings(t *testing.T) {
+	a := loadAuthority(t)
+	resultOf := func(t *testing.T, name, typ string) (outLine, map[string]json.RawMessage) {
+		t.Helper()
+		code, out, stderr := runWith(t, a, vectorClock, "-server", "192.0.2.53", "-anchors", anchorsFile, "-type", typ, name)
+		if code != exitOK {
+			t.Fatalf("%s: exit %d, stderr %s", name, code, stderr)
+		}
+		var top map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(out), &top); err != nil {
+			t.Fatal(err)
+		}
+		return decodeLines(t, out)[0], top
+	}
+	for _, c := range []struct {
+		canonical, typ, verdict string
+		spellings               []string
+	}{
+		{"test.", "SOA", "secure", []string{"test", "Test.", "TEST"}},
+		{"www.example.test.", "A", "secure", []string{"www.example.test", "WWW.Example.TEST.", "Www.Example.Test"}},
+		{"example.test.", "SOA", "secure", []string{"example.test", "Example.Test.", "EXAMPLE.TEST"}},
+		{"nope.example.test.", "A", "secure-nxdomain", []string{"nope.example.test", "NOPE.example.test."}},
+		{"www.example.test.", "MX", "secure-nodata", []string{"WWW.EXAMPLE.TEST"}},
+		{"x.wild.example.test.", "A", "secure", []string{"X.Wild.Example.Test"}},
+		{"alias.example.test.", "A", "secure", []string{"Alias.Example.Test"}},
+		{"www.insecure.test.", "A", "insecure", []string{"WWW.Insecure.Test"}},
+	} {
+		_, want := resultOf(t, c.canonical, c.typ)
+		for _, s := range c.spellings {
+			t.Run(s+"/"+c.typ, func(t *testing.T) {
+				l, got := resultOf(t, s, c.typ)
+				if v := decodeResult(t, l.Result).Verdict.String(); v != c.verdict {
+					t.Errorf("verdict %s, want %s", v, c.verdict)
+				}
+				if l.Query.Name != s {
+					t.Errorf("query.name %q, want %q as given", l.Query.Name, s)
+				}
+				if !bytes.Equal(got["result"], want["result"]) {
+					t.Errorf("result differs from %s:\n%s\nwant\n%s", c.canonical, got["result"], want["result"])
+				}
+			})
+		}
+	}
+}
+
 func keys(m map[string]json.RawMessage) []string {
 	var out []string
 	for k := range m {
