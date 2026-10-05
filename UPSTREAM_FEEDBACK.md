@@ -75,7 +75,7 @@ UF status legend:
 | [UP-017](#up-017) | Type-specific presentation of TLSA / SMIMEA and SVCB / HTTPS in `RDataToString`, generic only where the zone parser could not read the result back | `wire/rdata_svcb.go` | landed-upstream (dnsdata-js `4a08085`) |
 | [UP-018](#up-018) | NSEC3 signing (RFC 5155 §7.1; RFC 9276 profile by default, salt / iterations / opt-out as options) and NSEC3 proofs from the in-memory authority (§7.2) | `dnssec/signer/nsec3.go`, `resolver/memory/nsec3.go` | landed-upstream (dnsdata-js `0e76011`) |
 | [UP-019](#up-019) | DNS-over-TLS client (RFC 7858, RFC 8310 strict authentication) sharing the stream framing with the auth client | `resolver/dot/`, `resolver/internal/{stream,message}` | landed-upstream (dnsdata-js `b338bc2`) |
-| [UP-020](#up-020) | `dnsview` diagnostic command: validate queries against one server and print each `Result` as a JSON line | `cmd/dnsview/` | proposed |
+| [UP-020](#up-020) | `dnsview` diagnostic command: validate queries against one server and print each `Result` as a JSON line | `cmd/dnsview/` | landed-upstream (dnsdata-js `c0f3622`) |
 
 UP status legend:
 
@@ -1616,9 +1616,9 @@ dnsview -server ADDR [-type A,AAAA] [-anchors FILE] [-cd] [-timeout 10s] NAME...
 
 **Tests.** `cmd/dnsview/run_test.go` serves `testdata/signed/` from `resolver/memory` and checks each case of `cases.json` at its clock: the verdict and the fields that verdict carries (answer for secure, negativeReason, insecureAt, bogusAt / bogusReason), that `result` is byte-identical to `json.Marshal` of the `Result`, one line per name × type, per-line errors with exit 1, and usage errors.
 
-**TS migration notes.** `packages/core/src/cli/dnsview.ts`, exposed as `"bin": {"dnsview": "dist/cli/dnsview.js"}`. Call `registerAllHandlers()` before validating; upper-case the type before `StringToRRType`. Differences in the JSON between the two (empty chain / evidence, timestamp precision, key order) are not aligned now; the outputs are compared by meaning, and both must give the same verdicts on `testdata/signed/`.
+**TS migration notes.** `packages/core/src/cli/dnsview.ts`, exposed as `"bin": {"dnsview": "dist/cli/dnsview.js"}`. Call `registerAllHandlers()` before validating; upper-case the type before `StringToRRType`. Differences in the JSON between the two (empty chain / evidence, timestamp precision, key order) are not aligned now; the outputs are compared by meaning, and both must give the same verdicts on `testdata/signed/`. The TS flags are parsed as Go's `flag` package does (`-name value`, `-name=value`, `--name`; parsing stops at the first non-flag), and `-timeout` takes Go-style durations. Where the TS `validate()` throws, the line carries `"result": null`; the Go side can return a partial Result alongside the error.
 
-**Tracking:** proposed.
+**Tracking:** landed-upstream in dnsdata-js `c0f3622`.
 
 ---
 
