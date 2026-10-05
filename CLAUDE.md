@@ -24,7 +24,8 @@ wide-cpp-lib (C++) → dnsdata-js (TypeScript) → dnsdata-go (Go)   ← here
   - `dnssec.*` — DNSKEY / RRSIG / DS / NSEC / NSEC3 primitives
   - `wire.*`, `types.*` — lower-level primitives
 - No side effects from `init()`. Never call `os.Exit`. Never write to stdout
-  or stderr.
+  or stderr. (These bind the library packages; the commands under `cmd/`
+  are programs and may — DESIGN.md §4.)
 - No global state. Multiple `Verifier` instances must be usable concurrently
   and independently.
 

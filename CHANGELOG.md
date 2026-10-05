@@ -6,6 +6,17 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `cmd/dnsview`: a diagnostic command that validates queries against
+  one server (UDP, TCP on truncation) and prints, per query, one JSON
+  line `{"query","server","error"?,"result"}` with the
+  `verifier.Result` as it marshals itself. `-server` is required;
+  `-type` (comma-separated, any case), `-anchors` (default: the
+  built-in IANA root anchors), `-cd`, `-timeout` (default 10s)
+  (UP-020). DESIGN.md §4 now states that MUST NOT 20 and 24 bind the
+  library packages, not the commands under `cmd/`.
+
 ## [0.8.0] — 2026-10-03
 
 Transports and signing: a DNS-over-TLS client, the CD bit on queries,

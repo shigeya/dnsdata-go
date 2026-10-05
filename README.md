@@ -68,6 +68,7 @@ rollover.
 | `resolver/auth/` | UDP / TCP plain-DNS client with TC fallback and multi-server failover |
 | `resolver/memory/` | in-memory authority for signed zones, usable as `verifier.Resolver`, with fault injection |
 | `verifier/` | DNSSEC chain-of-trust walker (`Validate(ctx, qname, qtype) → *Result`), optional `Cache` |
+| `cmd/dnsview/` | diagnostic command: validates queries against one server and prints each `verifier.Result` as a JSON line |
 
 ## Quick start
 
@@ -100,6 +101,22 @@ func main() {
     _ = json.NewEncoder(os.Stdout).Encode(res)
 }
 ```
+
+### Command line
+
+`dnsview` runs the verifier against one server and prints one JSON line
+per query, `{"query":{"name","type"},"server","error"?,"result"}`, where
+`result` is the `verifier.Result` as it marshals itself:
+
+```sh
+go install github.com/shigeya/dnsdata-go/cmd/dnsview@latest
+dnsview -server 192.0.2.53 -type A,TXT example.com.
+```
+
+Queries go over UDP, retried over TCP on truncation. `-anchors FILE`
+replaces the built-in IANA root anchors, `-cd` sets the CD bit and
+`-timeout` (default 10s) bounds each query. The exit status is 1 when
+any query could not be validated to completion, 2 on a usage error.
 
 ## Documentation
 

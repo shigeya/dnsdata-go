@@ -75,6 +75,7 @@ UF status legend:
 | [UP-017](#up-017) | Type-specific presentation of TLSA / SMIMEA and SVCB / HTTPS in `RDataToString`, generic only where the zone parser could not read the result back | `wire/rdata_svcb.go` | landed-upstream (dnsdata-js `4a08085`) |
 | [UP-018](#up-018) | NSEC3 signing (RFC 5155 §7.1; RFC 9276 profile by default, salt / iterations / opt-out as options) and NSEC3 proofs from the in-memory authority (§7.2) | `dnssec/signer/nsec3.go`, `resolver/memory/nsec3.go` | landed-upstream (dnsdata-js `0e76011`) |
 | [UP-019](#up-019) | DNS-over-TLS client (RFC 7858, RFC 8310 strict authentication) sharing the stream framing with the auth client | `resolver/dot/`, `resolver/internal/{stream,message}` | landed-upstream (dnsdata-js `b338bc2`) |
+| [UP-020](#up-020) | `dnsview` diagnostic command: validate queries against one server and print each `Result` as a JSON line | `cmd/dnsview/` | proposed |
 
 UP status legend:
 
@@ -1580,6 +1581,44 @@ func NormalizeAddr(addr string) string
 **TS migration notes.** `DoTClient` over Node's `tls` with `rejectUnauthorized`, `minVersion: 'TLSv1.2'`, no SNI for an address; options `servers`, `tls` (`ca`, `servername`), `timeout_ms`, `checking_disabled`; errors as `DoTResolverError` subclasses. Node cannot create certificates, so the TS tests use a self-signed test certificate as a fixture.
 
 **Tracking:** landed-upstream in dnsdata-js `b338bc2`.
+
+---
+
+## UP-020
+
+### `dnsview` diagnostic command
+
+**Go source:** `cmd/dnsview/` (`main.go`, `run.go`).
+
+**Why it matters.** When a verdict looks wrong, the first question is what the verifier saw and concluded for one query against one server. Writing a throwaway program for that each time is wasteful; a small command that prints the `Result` as is answers it, and the same command in both implementations lets the two be compared on the same server.
+
+**Interface.**
+
+```
+dnsview -server ADDR [-type A,AAAA] [-anchors FILE] [-cd] [-timeout 10s] NAME...
+```
+
+- `-server` is required (no default server). `ip` or `ip:port`; port 53 by default. The `server` field carries the normalised `ip:port`.
+- Transport is the auth client only: UDP, retried over TCP when truncated. No DoH / DoT.
+- `-type`: comma-separated; each item is upper-cased and passed to `types.StringToRRType`, so mnemonics and `TYPE<n>` work in any case. Default `A`.
+- `-anchors`: a root-anchors JSON file (`dnssec.ReadAnchors`); without it `dnssec.BuiltinRootAnchors()`. Nothing under `~/.dnsdata-go/` is read implicitly.
+- `-cd`: the CD bit (`auth.WithCheckingDisabled`). `-timeout`: per query, default 10s.
+
+**Output.** JSON Lines, one per (NAME, type) in argument order:
+
+```json
+{"query":{"name":"example.com.","type":"A"},"server":"192.0.2.53:53","result":{"verdict":"secure", …}}
+```
+
+`query.type` is the mnemonic (`TYPE<n>` for types without one). `error` appears only when `Validate` returned an error; `result` is the `verifier.Result` marshalled as is (DESIGN.md MUST 10), `null` when no Result came back. Exit status 0 when every query produced a result without error, 1 otherwise, 2 on a usage error.
+
+**DESIGN.md.** MUST NOT 20 (`os.Exit`) and 24 (stdout / stderr) bind the library packages; `cmd/` is outside them. The command lives in the same module.
+
+**Tests.** `cmd/dnsview/run_test.go` serves `testdata/signed/` from `resolver/memory` and checks each case of `cases.json` at its clock: the verdict and the fields that verdict carries (answer for secure, negativeReason, insecureAt, bogusAt / bogusReason), that `result` is byte-identical to `json.Marshal` of the `Result`, one line per name × type, per-line errors with exit 1, and usage errors.
+
+**TS migration notes.** `packages/core/src/cli/dnsview.ts`, exposed as `"bin": {"dnsview": "dist/cli/dnsview.js"}`. Call `registerAllHandlers()` before validating; upper-case the type before `StringToRRType`. Differences in the JSON between the two (empty chain / evidence, timestamp precision, key order) are not aligned now; the outputs are compared by meaning, and both must give the same verdicts on `testdata/signed/`.
+
+**Tracking:** proposed.
 
 ---
 
