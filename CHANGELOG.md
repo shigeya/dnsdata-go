@@ -6,6 +6,12 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-10-05
+
+A diagnostic command, `dnsview`, that shows query by query what the
+verifier concluded against one server. The library API and its
+behaviour are unchanged. Coordinated release with dnsdata-js v0.9.0.
+
 ### Added
 
 - `cmd/dnsview`: a diagnostic command that validates queries against
@@ -14,8 +20,10 @@ this project adheres to [Semantic Versioning](https://semver.org/).
   `verifier.Result` as it marshals itself. `-server` is required;
   `-type` (comma-separated, any case), `-anchors` (default: the
   built-in IANA root anchors), `-cd`, `-timeout` (default 10s)
-  (UP-020). DESIGN.md §4 now states that MUST NOT 20 and 24 bind the
-  library packages, not the commands under `cmd/`.
+  (UP-020). NAME may be given in any case, with or without the
+  trailing dot: the verifier normalises it, and `query.name` echoes
+  it as given. DESIGN.md §4 now states that MUST NOT 20 and 24 bind
+  the library packages, not the commands under `cmd/`.
 
 ## [0.8.0] — 2026-10-03
 
