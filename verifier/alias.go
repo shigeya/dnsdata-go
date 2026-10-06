@@ -17,7 +17,7 @@ import (
 // failing signature verification returns a hop whose Verdict is Bogus
 // (and the alias still points at the target, so chasing can stop or
 // continue per the worst-of policy).
-func (v *Verifier) tryCNAME(currentZone *dnssec.Zone, currentName, qname string) (*AliasStep, *hopOutcome, error) {
+func (v *Verifier) tryCNAME(currentZone *dnssec.Zone, currentName, qname string, result *Result) (*AliasStep, *hopOutcome, error) {
 	rrset := currentZone.FindRRSet(qname, types.TypeCNAME)
 	if len(rrset) == 0 {
 		return nil, nil, nil
@@ -26,23 +26,15 @@ func (v *Verifier) tryCNAME(currentZone *dnssec.Zone, currentName, qname string)
 	target := strings.TrimSpace(rrset[0].Value)
 	target = normalizeQName(target)
 	if target == "" {
-		return nil, &hopOutcome{
-			Verdict:     VerdictBogus,
-			BogusAt:     qname,
-			BogusReason: "CNAME target is empty",
-		}, nil
+		return nil, bogusOutcome(qname, "CNAME target is empty", CodeAliasTargetInvalid), nil
 	}
 
-	ok, err := currentZone.VerifyRRSet(qname, types.TypeCNAME, dnssec.KeyModeNone, "")
+	check, err := v.checkRRSet(currentZone, qname, types.TypeCNAME, dnssec.KeyModeNone, result)
 	if err != nil {
-		return nil, nil, fmt.Errorf("%w: %v", ErrVerifier, err)
+		return nil, nil, err
 	}
-	if !ok {
-		return nil, &hopOutcome{
-			Verdict:     VerdictBogus,
-			BogusAt:     currentName,
-			BogusReason: fmt.Sprintf("RRSIG over %s/CNAME did not verify", qname),
-		}, nil
+	if !check.ok {
+		return nil, bogusOutcome(currentName, fmt.Sprintf("RRSIG over %s/CNAME did not verify", qname), check.code), nil
 	}
 
 	alias := &AliasStep{
@@ -61,7 +53,7 @@ func (v *Verifier) tryCNAME(currentZone *dnssec.Zone, currentName, qname string)
 // Implementation: walk qname's ancestors from longest to shortest;
 // the first one carrying a DNAME wins. The synthesised qname is
 // strict suffix replacement of OWNER with TARGET.
-func (v *Verifier) tryDNAME(currentZone *dnssec.Zone, currentName, qname string) (*AliasStep, *hopOutcome, error) {
+func (v *Verifier) tryDNAME(currentZone *dnssec.Zone, currentName, qname string, result *Result) (*AliasStep, *hopOutcome, error) {
 	ancestors := ancestorsOf(qname)
 	for _, anc := range ancestors {
 		if dnssec.EqualCanonicalNames(anc, qname) {
@@ -75,32 +67,21 @@ func (v *Verifier) tryDNAME(currentZone *dnssec.Zone, currentName, qname string)
 		target := strings.TrimSpace(rrset[0].Value)
 		target = normalizeQName(target)
 		if target == "" {
-			return nil, &hopOutcome{
-				Verdict:     VerdictBogus,
-				BogusAt:     anc,
-				BogusReason: "DNAME target is empty",
-			}, nil
+			return nil, bogusOutcome(anc, "DNAME target is empty", CodeAliasTargetInvalid), nil
 		}
 
-		ok, err := currentZone.VerifyRRSet(anc, types.TypeDNAME, dnssec.KeyModeNone, "")
+		check, err := v.checkRRSet(currentZone, anc, types.TypeDNAME, dnssec.KeyModeNone, result)
 		if err != nil {
-			return nil, nil, fmt.Errorf("%w: %v", ErrVerifier, err)
+			return nil, nil, err
 		}
-		if !ok {
-			return nil, &hopOutcome{
-				Verdict:     VerdictBogus,
-				BogusAt:     currentName,
-				BogusReason: fmt.Sprintf("RRSIG over %s/DNAME did not verify", anc),
-			}, nil
+		if !check.ok {
+			return nil, bogusOutcome(currentName, fmt.Sprintf("RRSIG over %s/DNAME did not verify", anc), check.code), nil
 		}
 
 		synth := synthesiseDNAMETarget(qname, anc, target)
 		if synth == "" {
-			return nil, &hopOutcome{
-				Verdict:     VerdictBogus,
-				BogusAt:     anc,
-				BogusReason: fmt.Sprintf("DNAME at %s could not synthesise target for %s", anc, qname),
-			}, nil
+			return nil, bogusOutcome(anc,
+				fmt.Sprintf("DNAME at %s could not synthesise target for %s", anc, qname), CodeAliasTargetInvalid), nil
 		}
 		alias := &AliasStep{
 			Type:   "dname",

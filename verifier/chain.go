@@ -33,7 +33,9 @@ const MaxAliasHops = 10
 // opinion (typically wrapping [ErrResolver], [ErrChainTimeout], or
 // [ErrInvalidQName]); a returned Result is non-nil whenever the
 // classification itself ran to completion, even when the verdict is
-// Bogus or Insecure.
+// Bogus or Insecure. A failing verdict carries a machine-readable
+// [Result.ReasonCode]; [Result.Err] turns it into an error that wraps
+// the matching sentinel ([ErrSigExpired], [ErrNoDS], …).
 func (v *Verifier) Validate(ctx context.Context, qname string, qtype uint16) (*Result, error) {
 	if qname == "" {
 		return nil, fmt.Errorf("%w: qname is empty", ErrInvalidQName)
@@ -53,9 +55,7 @@ func (v *Verifier) Validate(ctx context.Context, qname string, qtype uint16) (*R
 			return result, joinChainErr(err)
 		}
 		if seen[currentQname] {
-			result.Verdict = VerdictBogus
-			result.BogusAt = currentQname
-			result.BogusReason = "alias loop detected"
+			setBogus(result, currentQname, "alias loop detected", CodeAliasLoop)
 			return result, nil
 		}
 		seen[currentQname] = true
@@ -97,6 +97,9 @@ func (v *Verifier) Validate(ctx context.Context, qname string, qtype uint16) (*R
 		if outcome.InsecureReason != "" {
 			result.InsecureReason = outcome.InsecureReason
 		}
+		if outcome.ReasonCode != "" {
+			result.ReasonCode = outcome.ReasonCode
+		}
 		if outcome.NegativeReason != "" {
 			result.NegativeReason = outcome.NegativeReason
 		}
@@ -110,10 +113,16 @@ func (v *Verifier) Validate(ctx context.Context, qname string, qtype uint16) (*R
 	}
 
 	// Alias chain longer than MaxAliasHops without resolving.
-	result.Verdict = VerdictBogus
-	result.BogusAt = currentQname
-	result.BogusReason = fmt.Sprintf("alias chain exceeded %d hops", MaxAliasHops)
+	setBogus(result, currentQname, fmt.Sprintf("alias chain exceeded %d hops", MaxAliasHops), CodeAliasLimit)
 	return result, nil
+}
+
+// setBogus records a Bogus verdict decided outside a hop outcome.
+func setBogus(result *Result, at, reason, code string) {
+	result.Verdict = VerdictBogus
+	result.BogusAt = at
+	result.BogusReason = reason
+	result.ReasonCode = code
 }
 
 // hopOutcome is the inner result of one [validateOneHop] call.
@@ -128,6 +137,7 @@ type hopOutcome struct {
 	InsecureAt     string
 	InsecureReason string
 	NegativeReason string
+	ReasonCode     string
 	Alias          *AliasStep
 	Wildcard       *WildcardInfo
 	Answer         *Answer // the verified RRset of a terminal positive hop
@@ -146,11 +156,7 @@ func (v *Verifier) validateOneHop(ctx context.Context, qname string, qtype uint1
 	if rootZone == nil {
 		// validateRoot set result.Verdict / Bogus*; mirror into the
 		// outcome so the outer loop can combine verdicts.
-		return &hopOutcome{
-			Verdict:     VerdictBogus,
-			BogusAt:     result.BogusAt,
-			BogusReason: result.BogusReason,
-		}, nil
+		return bogusOutcome(result.BogusAt, result.BogusReason, result.ReasonCode), nil
 	}
 	if !zoneAlreadyInChain(result, ".") {
 		result.Chain = append(result.Chain, summarizeZone(".", rootZone, rootKSK))
@@ -180,17 +186,14 @@ func (v *Verifier) validateOneHop(ctx context.Context, qname string, qtype uint1
 				Verdict:        VerdictInsecure,
 				InsecureAt:     childName,
 				InsecureReason: result.InsecureReason,
+				ReasonCode:     CodeNoDS,
 			}, nil
 		case descendBogus:
 			reason := result.BogusReason
 			if reason == "" {
 				reason = "DS or DNSKEY verification failed"
 			}
-			return &hopOutcome{
-				Verdict:     VerdictBogus,
-				BogusAt:     childName,
-				BogusReason: reason,
-			}, nil
+			return bogusOutcome(childName, reason, result.ReasonCode), nil
 		case descendNoCut:
 			// childName is not a zone cut under currentZone — most
 			// often this is qname itself (handled by falling through
@@ -221,16 +224,13 @@ func (v *Verifier) resolveLeaf(ctx context.Context, currentZone *dnssec.Zone, cu
 		return nil, err
 	}
 	if added > 0 {
-		ok, err := currentZone.VerifyRRSet(qname, qtype, dnssec.KeyModeNone, "")
+		check, err := v.checkRRSet(currentZone, qname, qtype, dnssec.KeyModeNone, result)
 		if err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrVerifier, err)
+			return nil, err
 		}
-		if !ok {
-			return &hopOutcome{
-				Verdict:     VerdictBogus,
-				BogusAt:     currentName,
-				BogusReason: fmt.Sprintf("RRSIG over %s/%s did not verify", qname, qtypeMnemonic(qtype)),
-			}, nil
+		if !check.ok {
+			return bogusOutcome(currentName,
+				fmt.Sprintf("RRSIG over %s/%s did not verify", qname, qtypeMnemonic(qtype)), check.code), nil
 		}
 		answer, err := buildAnswer(currentZone, qname, qtype)
 		if err != nil {
@@ -243,11 +243,9 @@ func (v *Verifier) resolveLeaf(ctx context.Context, currentZone *dnssec.Zone, cu
 		if wc := detectWildcard(currentZone, qname, qtype); wc != nil {
 			proven, reason := v.proveQnameNonExistence(currentZone, wc.NextCloser)
 			if !proven {
-				return &hopOutcome{
-					Verdict:     VerdictBogus,
-					BogusAt:     currentName,
-					BogusReason: fmt.Sprintf("wildcard synthesis at %s lacks non-existence proof for %s", wc.Source, wc.NextCloser),
-				}, nil
+				return bogusOutcome(currentName,
+					fmt.Sprintf("wildcard synthesis at %s lacks non-existence proof for %s", wc.Source, wc.NextCloser),
+					CodeWildcardProofMissing), nil
 			}
 			wc.ProofReason = reason
 			return &hopOutcome{Verdict: VerdictSecure, Wildcard: wc, Answer: answer}, nil
@@ -262,12 +260,12 @@ func (v *Verifier) resolveLeaf(ctx context.Context, currentZone *dnssec.Zone, cu
 	// trying CNAME first would report the signed DNAME as Bogus. The
 	// target is derived from the DNAME; the synthesised CNAME is not
 	// used.
-	if _, hop, err := v.tryDNAME(currentZone, currentName, qname); err != nil {
+	if _, hop, err := v.tryDNAME(currentZone, currentName, qname, result); err != nil {
 		return nil, err
 	} else if hop != nil {
 		return hop, nil
 	}
-	if _, hop, err := v.tryCNAME(currentZone, currentName, qname); err != nil {
+	if _, hop, err := v.tryCNAME(currentZone, currentName, qname, result); err != nil {
 		return nil, err
 	} else if hop != nil {
 		return hop, nil
@@ -370,12 +368,13 @@ func (v *Verifier) descendInto(ctx context.Context, parentZone *dnssec.Zone, par
 	}
 
 	// DS rrset must be signed by parent zone's keys.
-	dsOK, err := parentZone.VerifyRRSet(childName, types.TypeDS, dnssec.KeyModeNone, "")
+	dsCheck, err := v.checkRRSet(parentZone, childName, types.TypeDS, dnssec.KeyModeNone, result)
 	if err != nil {
-		return nil, nil, descendBogus, fmt.Errorf("%w: %v", ErrVerifier, err)
+		return nil, nil, descendBogus, err
 	}
-	if !dsOK {
+	if !dsCheck.ok {
 		result.BogusReason = fmt.Sprintf("DS rrset for %s did not verify under %s", childName, parentName)
+		result.ReasonCode = dsCheck.code
 		return nil, nil, descendBogus, nil
 	}
 
@@ -393,19 +392,32 @@ func (v *Verifier) descendInto(ctx context.Context, parentZone *dnssec.Zone, par
 	childKSK, err := matchKSKWithDS(childZone, parentZone, childName)
 	if err != nil {
 		result.BogusReason = err.Error()
+		result.ReasonCode = keyMatchCode(err)
 		return nil, nil, descendBogus, nil
 	}
 	childZone.AddSEP(childName)
 
-	dnskeyOK, err := childZone.VerifyRRSet(childName, types.TypeDNSKEY, dnssec.KeyModeKSK, "")
+	dnskeyCheck, err := v.checkRRSet(childZone, childName, types.TypeDNSKEY, dnssec.KeyModeKSK, result)
 	if err != nil {
-		return nil, nil, descendBogus, fmt.Errorf("%w: %v", ErrVerifier, err)
+		return nil, nil, descendBogus, err
 	}
-	if !dnskeyOK {
+	if !dnskeyCheck.ok {
 		result.BogusReason = fmt.Sprintf("DNSKEY rrset for %s did not verify under its own KSK", childName)
+		result.ReasonCode = dnskeyCheck.code
 		return nil, nil, descendBogus, nil
 	}
 	return childZone, childKSK, descendDescended, nil
+}
+
+// keyMatchCode names why [matchKSKWithDS] found no key.
+func keyMatchCode(err error) string {
+	switch {
+	case errors.Is(err, ErrNoDNSKEY):
+		return CodeNoDNSKEY
+	case errors.Is(err, ErrNoDS):
+		return CodeNoDS
+	}
+	return CodeDSMismatch
 }
 
 // belowDNAME reports whether z holds a DNAME at a proper ancestor of
@@ -432,20 +444,17 @@ func (v *Verifier) validateRoot(ctx context.Context, result *Result) (*dnssec.Zo
 	}
 	rootKSK, err := matchKSKWithAnchors(rootZone, v.anchors)
 	if err != nil {
-		result.Verdict = VerdictBogus
-		result.BogusAt = "."
-		result.BogusReason = err.Error()
-		return nil, nil, nil // Bogus is a classified verdict, not a Validate error.
+		// Bogus is a classified verdict, not a Validate error.
+		setBogus(result, ".", err.Error(), CodeTrustAnchorMismatch)
+		return nil, nil, nil
 	}
 	rootZone.AddSEP(".")
-	ok, err := rootZone.VerifyRRSet(".", types.TypeDNSKEY, dnssec.KeyModeKSK, "")
+	check, err := v.checkRRSet(rootZone, ".", types.TypeDNSKEY, dnssec.KeyModeKSK, result)
 	if err != nil {
-		return nil, nil, fmt.Errorf("%w: %v", ErrVerifier, err)
+		return nil, nil, err
 	}
-	if !ok {
-		result.Verdict = VerdictBogus
-		result.BogusAt = "."
-		result.BogusReason = "root DNSKEY rrset signature did not verify"
+	if !check.ok {
+		setBogus(result, ".", "root DNSKEY rrset signature did not verify", check.code)
 		return nil, nil, nil
 	}
 	return rootZone, rootKSK, nil

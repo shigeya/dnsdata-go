@@ -36,6 +36,28 @@ this project adheres to [Semantic Versioning](https://semver.org/).
   `[]dnssec.SigResult{RRSig, Status, Err}`) and `dnssec.RRSetVerified`
   (folds those into `VerifyRRSet`'s answer). `VerifyRRSIG` is now
   `CheckRRSIG` reduced to a bool; its results are unchanged.
+- `verifier.Result.ReasonCode` (JSON `reasonCode`, omitted when empty):
+  the machine-readable cause of a failing verdict, set on every Bogus
+  and Insecure result. Codes and the sentinel `Result.Err()` wraps:
+  `no-ds` → `ErrNoDS` (Insecure), `no-dnskey` → `ErrNoDNSKEY`,
+  `trust-anchor-mismatch` → `ErrTrustAnchorMismatch`, `ds-mismatch` →
+  `ErrDSMismatch`, `no-rrsig` / `no-matching-key` / `sig-invalid` →
+  `ErrSigInvalid`, `sig-expired` / `sig-not-yet-valid` →
+  `ErrSigExpired`, `unsupported-algorithm` → `ErrUnsupportedAlgo`,
+  and `alias-loop`, `alias-limit`, `alias-target-invalid`,
+  `wildcard-proof-missing` → `ErrBogus` only. Every Bogus `Err()` also
+  wraps `ErrBogus`. Exported as `verifier.Code*` constants. When every
+  signature over an rrset uses an unsupported algorithm, Validate still
+  returns its `ErrVerifier` error with an Indeterminate result, which
+  now carries `unsupported-algorithm`.
+- `verifier.Result.Err()`: nil when `ReasonCode` is empty, otherwise an
+  error wrapping the code's sentinel (and `ErrBogus` for Bogus) whose
+  text carries the failure point and the human reason.
+- `verifier.ErrBogus`, `ErrSigInvalid`, `ErrDSMismatch`: new sentinels,
+  reached through `Result.Err()`. `ErrNoDS`, `ErrNoDNSKEY`,
+  `ErrSigExpired`, `ErrUnsupportedAlgo` and `ErrTrustAnchorMismatch`,
+  declared but never surfaced before, are now reached the same way.
+  `Validate`'s own errors are unchanged.
 
 ### Changed
 

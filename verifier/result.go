@@ -39,6 +39,16 @@ type Result struct {
 	// non-Bogus verdicts.
 	BogusReason string `json:"bogusReason,omitempty"`
 
+	// ReasonCode is the machine-readable cause of a failing verdict,
+	// one of the Code constants ([CodeSigExpired], [CodeNoDS], …). Set
+	// whenever the verdict is Bogus or Insecure, and on the
+	// Indeterminate Result Validate returns with its error when every
+	// signature used an unsupported algorithm
+	// ([CodeUnsupportedAlgorithm]). Empty otherwise, including for
+	// the secure verdicts. [Result.Err] turns it into an error that
+	// wraps the matching sentinel.
+	ReasonCode string `json:"reasonCode,omitempty"`
+
 	// Evidence carries the raw records that drove the verdict so
 	// downstream consumers (mailsec-probe Signals) can re-render them
 	// without re-querying. DESIGN.md MUST 5.
