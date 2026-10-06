@@ -58,6 +58,19 @@ this project adheres to [Semantic Versioning](https://semver.org/).
   `ErrSigExpired`, `ErrUnsupportedAlgo` and `ErrTrustAnchorMismatch`,
   declared but never surfaced before, are now reached the same way.
   `Validate`'s own errors are unchanged.
+- `verifier.ZoneStep.Signatures` (JSON `signatures`, omitted when
+  empty): one `verifier.SigCheck` per RRSIG examined at the zone, in
+  check order: the DS rrset of the descent into the zone, the DNSKEY
+  rrset, then the answer / CNAME / DNAME rrsets verified there (denial
+  NSEC / NSEC3 records are not listed). Every RRSIG over those rrsets is
+  checked and listed, not only the first that verifies; verdicts are
+  unchanged. `SigCheck` is `{name, rrType, keyTag, algorithm, signer,
+  inception, expiration, result}` (times in UTC); `result` is one of
+  `verifier.SigVerified` (`verified`), `SigExpired` (`expired`),
+  `SigNotYetValid` (`not-yet-valid`), `SigUnsupportedAlgorithm`
+  (`unsupported-algorithm`), `SigNoMatchingKey` (`no-matching-key`),
+  `SigInvalid` (`invalid`), the classification of
+  `dnssec.Zone.CheckRRSIG`.
 
 ### Changed
 
@@ -73,6 +86,11 @@ this project adheres to [Semantic Versioning](https://semver.org/).
   `WithRegistry(zone.DefaultRegistry())` to share it.
 - The handler cache on `zone.ResourceRecord` is now safe for concurrent
   use; a `ResourceRecord` must not be copied by value.
+- A Bogus result's `Chain` now ends with a step for the zone where
+  validation failed (root DNSKEY, DS or DNSKEY of the descent), with
+  its DNSKEYs / DS digests as far as they were loaded, the failing
+  `Signatures`, and no `SignedBy`. Before, the chain stopped at the
+  last zone that validated.
 
 ### Fixed
 

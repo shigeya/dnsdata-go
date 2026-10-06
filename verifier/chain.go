@@ -149,7 +149,7 @@ type hopOutcome struct {
 // are the caller's responsibility.
 func (v *Verifier) validateOneHop(ctx context.Context, qname string, qtype uint16, result *Result) (*hopOutcome, error) {
 	// Step 1: load and validate the root zone.
-	rootZone, rootKSK, err := v.validateRoot(ctx, result)
+	rootZone, err := v.validateRoot(ctx, result)
 	if err != nil {
 		return nil, err
 	}
@@ -157,9 +157,6 @@ func (v *Verifier) validateOneHop(ctx context.Context, qname string, qtype uint1
 		// validateRoot set result.Verdict / Bogus*; mirror into the
 		// outcome so the outer loop can combine verdicts.
 		return bogusOutcome(result.BogusAt, result.BogusReason, result.ReasonCode), nil
-	}
-	if !zoneAlreadyInChain(result, ".") {
-		result.Chain = append(result.Chain, summarizeZone(".", rootZone, nil, rootKSK))
 	}
 
 	// Step 2: descend through each label boundary that's actually a
@@ -170,16 +167,16 @@ func (v *Verifier) validateOneHop(ctx context.Context, qname string, qtype uint1
 		if err := ctx.Err(); err != nil {
 			return nil, joinChainErr(err)
 		}
-		childZone, childKSK, status, err := v.descendInto(ctx, currentZone, currentName, childName, result)
+		d, err := v.descendInto(ctx, currentZone, currentName, childName, result)
 		if err != nil {
 			return nil, err
 		}
-		switch status {
+		if d.status == descendDescended || d.status == descendBogus {
+			v.addStep(result, summarizeZone(childName, d.zone, currentZone, d.ksk, d.sigs))
+		}
+		switch d.status {
 		case descendDescended:
-			if !zoneAlreadyInChain(result, childName) {
-				result.Chain = append(result.Chain, summarizeZone(childName, childZone, currentZone, childKSK))
-			}
-			currentZone = childZone
+			currentZone = d.zone
 			currentName = childName
 		case descendInsecure:
 			return &hopOutcome{
@@ -228,6 +225,7 @@ func (v *Verifier) resolveLeaf(ctx context.Context, currentZone *dnssec.Zone, cu
 		if err != nil {
 			return nil, err
 		}
+		v.addZoneSigs(result, currentName, check.sigs)
 		if !check.ok {
 			return bogusOutcome(currentName,
 				fmt.Sprintf("RRSIG over %s/%s did not verify", qname, qtypeMnemonic(qtype)), check.code), nil
@@ -287,18 +285,6 @@ func (v *Verifier) resolveLeaf(ctx context.Context, currentZone *dnssec.Zone, cu
 	return &hopOutcome{Verdict: VerdictIndeterminate}, nil
 }
 
-// zoneAlreadyInChain reports whether result.Chain already contains a
-// ZoneStep for zoneName. Used during alias chasing so multiple hops
-// don't duplicate "." and "com." entries.
-func zoneAlreadyInChain(result *Result, zoneName string) bool {
-	for _, step := range result.Chain {
-		if step.Zone == zoneName {
-			return true
-		}
-	}
-	return false
-}
-
 // combineVerdicts merges a per-hop verdict into the running total
 // using a worst-of policy. The ordering, from "best" to "worst", is:
 //
@@ -337,6 +323,14 @@ const (
 	descendBogus                   // DS or DNSKEY verification failed
 )
 
+// descent is the outcome of one [Verifier.descendInto] step.
+type descent struct {
+	status descendStatus
+	zone   *dnssec.Zone   // the child zone, once its DNSKEYs are loaded
+	ksk    *dnssec.DNSKey // the child KSK, when descended
+	sigs   []SigCheck     // the DS, then DNSKEY, RRSIG checks made
+}
+
 // descendInto attempts to walk one level of the chain: load and
 // verify the DS rrset for childName at parentZone, then load and
 // verify the DNSKEY rrset for childName, returning the new child
@@ -348,65 +342,75 @@ const (
 // keeps the previous "treat as NoCut" behaviour so existing callers
 // that ask for DS at a non-zone-cut name (e.g. qname itself) still
 // proceed to leaf resolution.
-func (v *Verifier) descendInto(ctx context.Context, parentZone *dnssec.Zone, parentName, childName string, result *Result) (*dnssec.Zone, *dnssec.DNSKey, descendStatus, error) {
+func (v *Verifier) descendInto(ctx context.Context, parentZone *dnssec.Zone, parentName, childName string, result *Result) (descent, error) {
 	dsCount, err := v.loadRecords(ctx, parentZone, childName, types.TypeDS, result)
 	if err != nil {
-		return nil, nil, descendBogus, err
+		return descent{status: descendBogus}, err
 	}
 	if dsCount == 0 {
-		if belowDNAME(parentZone, childName) {
-			// A name below a DNAME is never a zone cut (RFC 6672 §2.4),
-			// and denial records for the DNAME owner say nothing about
-			// it (RFC 6840 §4.1). Leaf resolution follows the DNAME.
-			return nil, nil, descendNoCut, nil
-		}
-		if proven, reason := v.proveNoDS(parentZone, childName); proven {
-			result.InsecureReason = reason
-			return nil, nil, descendInsecure, nil
-		}
-		return nil, nil, descendNoCut, nil
+		return v.noDSDescent(parentZone, childName, result), nil
 	}
 
 	// DS rrset must be signed by parent zone's keys.
 	dsCheck, err := v.checkRRSet(parentZone, childName, types.TypeDS, dnssec.KeyModeNone, result)
 	if err != nil {
-		return nil, nil, descendBogus, err
+		return descent{status: descendBogus}, err
 	}
+	d := descent{status: descendBogus, sigs: dsCheck.sigs}
 	if !dsCheck.ok {
 		result.BogusReason = fmt.Sprintf("DS rrset for %s did not verify under %s", childName, parentName)
 		result.ReasonCode = dsCheck.code
-		return nil, nil, descendBogus, nil
+		return d, nil
 	}
 
 	// Load DNSKEY for child into a new zone parented at parentZone so
 	// dnssec.Zone.verifyDelegationSigner can find DS records via the
 	// parent pointer.
-	childZone := v.newZone()
-	childZone.SetParent(parentZone)
-	if _, err := v.loadRecords(ctx, childZone, childName, types.TypeDNSKEY, result); err != nil {
-		return nil, nil, descendBogus, err
+	d.zone = v.newZone()
+	d.zone.SetParent(parentZone)
+	if _, err := v.loadRecords(ctx, d.zone, childName, types.TypeDNSKEY, result); err != nil {
+		return d, err
 	}
 
 	// Manually match the child's KSK against one of the parent's DS
 	// records before invoking KSK-mode verification.
-	childKSK, err := matchKSKWithDS(childZone, parentZone, childName)
+	childKSK, err := matchKSKWithDS(d.zone, parentZone, childName)
 	if err != nil {
 		result.BogusReason = err.Error()
 		result.ReasonCode = keyMatchCode(err)
-		return nil, nil, descendBogus, nil
+		return d, nil
 	}
-	childZone.AddSEP(childName)
+	d.zone.AddSEP(childName)
 
-	dnskeyCheck, err := v.checkRRSet(childZone, childName, types.TypeDNSKEY, dnssec.KeyModeKSK, result)
+	dnskeyCheck, err := v.checkRRSet(d.zone, childName, types.TypeDNSKEY, dnssec.KeyModeKSK, result)
 	if err != nil {
-		return nil, nil, descendBogus, err
+		return d, err
 	}
+	d.sigs = append(d.sigs, dnskeyCheck.sigs...)
 	if !dnskeyCheck.ok {
 		result.BogusReason = fmt.Sprintf("DNSKEY rrset for %s did not verify under its own KSK", childName)
 		result.ReasonCode = dnskeyCheck.code
-		return nil, nil, descendBogus, nil
+		return d, nil
 	}
-	return childZone, childKSK, descendDescended, nil
+	d.status, d.ksk = descendDescended, childKSK
+	return d, nil
+}
+
+// noDSDescent classifies a childName for which parentZone returned no
+// DS: an Insecure delegation when a no-DS proof verifies, otherwise
+// not a zone cut.
+func (v *Verifier) noDSDescent(parentZone *dnssec.Zone, childName string, result *Result) descent {
+	if belowDNAME(parentZone, childName) {
+		// A name below a DNAME is never a zone cut (RFC 6672 §2.4),
+		// and denial records for the DNAME owner say nothing about
+		// it (RFC 6840 §4.1). Leaf resolution follows the DNAME.
+		return descent{status: descendNoCut}
+	}
+	if proven, reason := v.proveNoDS(parentZone, childName); proven {
+		result.InsecureReason = reason
+		return descent{status: descendInsecure}
+	}
+	return descent{status: descendNoCut}
 }
 
 // keyMatchCode names why [matchKSKWithDS] found no key.
@@ -436,28 +440,33 @@ func belowDNAME(z *dnssec.Zone, name string) bool {
 }
 
 // validateRoot loads the root DNSKEY rrset, matches it against the
-// configured trust anchors, and verifies the rrset signature.
-func (v *Verifier) validateRoot(ctx context.Context, result *Result) (*dnssec.Zone, *dnssec.DNSKey, error) {
+// configured trust anchors, and verifies the rrset signature. It adds
+// the root's step to the chain, and returns nil (with the Bogus
+// verdict set on result) when the root does not validate.
+func (v *Verifier) validateRoot(ctx context.Context, result *Result) (*dnssec.Zone, error) {
 	rootZone := v.newZone()
 	if _, err := v.loadRecords(ctx, rootZone, ".", types.TypeDNSKEY, result); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	rootKSK, err := matchKSKWithAnchors(rootZone, v.anchors)
 	if err != nil {
 		// Bogus is a classified verdict, not a Validate error.
+		v.addStep(result, summarizeZone(".", rootZone, nil, nil, nil))
 		setBogus(result, ".", err.Error(), CodeTrustAnchorMismatch)
-		return nil, nil, nil
+		return nil, nil
 	}
 	rootZone.AddSEP(".")
 	check, err := v.checkRRSet(rootZone, ".", types.TypeDNSKEY, dnssec.KeyModeKSK, result)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if !check.ok {
+		v.addStep(result, summarizeZone(".", rootZone, nil, nil, check.sigs))
 		setBogus(result, ".", "root DNSKEY rrset signature did not verify", check.code)
-		return nil, nil, nil
+		return nil, nil
 	}
-	return rootZone, rootKSK, nil
+	v.addStep(result, summarizeZone(".", rootZone, nil, rootKSK, check.sigs))
+	return rootZone, nil
 }
 
 // loadRecords issues one resolver Query and appends every returned
@@ -596,23 +605,16 @@ func matchKSKWithDS(childZone, parentZone *dnssec.Zone, childName string) (*dnss
 	return nil, fmt.Errorf("no DNSKEY at %s matched a DS in parent", childName)
 }
 
-// summarizeZone collects a [ZoneStep] for the result chain. The DS
-// records are read from parent, which the descent loaded them into
-// (nil for the root).
-func summarizeZone(zoneName string, z, parent *dnssec.Zone, ksk *dnssec.DNSKey) ZoneStep {
-	step := ZoneStep{Zone: zoneName}
-	for _, rr := range z.FindRRSet(zoneName, types.TypeDNSKEY) {
-		k, ok := z.Handler(rr).(*dnssec.DNSKey)
-		if !ok {
-			continue
-		}
-		step.DNSKEYs = append(step.DNSKEYs, KeySummary{
-			KeyTag:    k.KeyTag,
-			Algorithm: k.Algorithm,
-			SEP:       k.IsSecureEntryPoint(),
-		})
+// summarizeZone collects a [ZoneStep] for the result chain. The DNSKEYs
+// are read from z (nil when the walk did not load them), the DS records
+// from parent, which the descent loaded them into (nil for the root).
+func summarizeZone(zoneName string, z, parent *dnssec.Zone, ksk *dnssec.DNSKey, sigs []SigCheck) ZoneStep {
+	step := ZoneStep{
+		Zone:       zoneName,
+		DNSKEYs:    summarizeDNSKEYs(zoneName, z),
+		DSDigests:  summarizeDS(zoneName, parent),
+		Signatures: sigs,
 	}
-	step.DSDigests = summarizeDS(zoneName, parent)
 	if ksk != nil {
 		step.SignedBy = &KeySummary{
 			KeyTag:    ksk.KeyTag,
@@ -621,6 +623,22 @@ func summarizeZone(zoneName string, z, parent *dnssec.Zone, ksk *dnssec.DNSKey) 
 		}
 	}
 	return step
+}
+
+// summarizeDNSKEYs lists the DNSKEYs at zoneName held by z.
+func summarizeDNSKEYs(zoneName string, z *dnssec.Zone) []KeySummary {
+	if z == nil {
+		return nil
+	}
+	var out []KeySummary
+	for _, rr := range z.FindRRSet(zoneName, types.TypeDNSKEY) {
+		k, ok := z.Handler(rr).(*dnssec.DNSKey)
+		if !ok {
+			continue
+		}
+		out = append(out, KeySummary{KeyTag: k.KeyTag, Algorithm: k.Algorithm, SEP: k.IsSecureEntryPoint()})
+	}
+	return out
 }
 
 // summarizeDS lists the DS records for zoneName held by parent.

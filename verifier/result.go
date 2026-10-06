@@ -169,8 +169,45 @@ type ZoneStep struct {
 
 	// SignedBy carries the (key-tag, algorithm) pair of the DNSKEY
 	// that verified the DNSKEY rrset at this zone (the KSK). Empty if
-	// validation did not reach this step.
+	// validation did not reach this step, including on the step of the
+	// zone where a Bogus chain failed.
 	SignedBy *KeySummary `json:"signedBy,omitempty"`
+
+	// Signatures lists the outcome of every RRSIG examined for this
+	// zone, in the order checked: the DS rrset that authorised the
+	// descent into the zone (signed by the parent; none for the root),
+	// the zone's DNSKEY rrset, then the positive rrsets the walker
+	// verified in the zone (the answer, CNAME and DNAME rrsets). The
+	// NSEC / NSEC3 records of denial proofs are not listed. A Bogus
+	// chain ends with a step for the zone where it failed, holding the
+	// checks that failed (DS and DNSKEY lists may then be partial).
+	Signatures []SigCheck `json:"signatures,omitempty"`
+}
+
+// SigCheck is the outcome of checking one RRSIG. Result is one of
+// [SigVerified], [SigExpired], [SigNotYetValid],
+// [SigUnsupportedAlgorithm], [SigNoMatchingKey], [SigInvalid]; the
+// classification is the one [dnssec.Zone.CheckRRSIG] makes, shared with
+// [Result.ReasonCode].
+//
+// A KSK's RRSIG over the DNSKEY rrset counts as verified once the KSK
+// matches its DS (or trust anchor), as [dnssec.Zone.VerifyRRSIG] has
+// always decided it.
+type SigCheck struct {
+	// Name and RRType identify the covered rrset (RRType is the RRSIG's
+	// type covered).
+	Name   string `json:"name"`
+	RRType uint16 `json:"rrType"`
+
+	KeyTag    uint16 `json:"keyTag"`
+	Algorithm uint8  `json:"algorithm"`
+	Signer    string `json:"signer"`
+
+	// Inception and Expiration are the RRSIG's validity window (UTC).
+	Inception  time.Time `json:"inception"`
+	Expiration time.Time `json:"expiration"`
+
+	Result string `json:"result"`
 }
 
 // KeySummary identifies a DNSKEY without exposing the raw key bytes

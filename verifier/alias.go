@@ -33,6 +33,7 @@ func (v *Verifier) tryCNAME(currentZone *dnssec.Zone, currentName, qname string,
 	if err != nil {
 		return nil, nil, err
 	}
+	v.addZoneSigs(result, currentName, check.sigs)
 	if !check.ok {
 		return nil, bogusOutcome(currentName, fmt.Sprintf("RRSIG over %s/CNAME did not verify", qname), check.code), nil
 	}
@@ -74,6 +75,7 @@ func (v *Verifier) tryDNAME(currentZone *dnssec.Zone, currentName, qname string,
 		if err != nil {
 			return nil, nil, err
 		}
+		v.addZoneSigs(result, currentName, check.sigs)
 		if !check.ok {
 			return nil, bogusOutcome(currentName, fmt.Sprintf("RRSIG over %s/DNAME did not verify", anc), check.code), nil
 		}

@@ -134,9 +134,9 @@ func sigFailureCode(results []dnssec.SigResult) string {
 
 // rrsetCheck is the outcome of checking every RRSIG over one rrset.
 type rrsetCheck struct {
-	ok      bool
-	code    string // why it failed, when !ok
-	results []dnssec.SigResult
+	ok   bool
+	code string     // why it failed, when !ok
+	sigs []SigCheck // one per RRSIG examined
 }
 
 // checkRRSet verifies (name, rrtype) in z under mode with "any-valid"
@@ -147,7 +147,7 @@ type rrsetCheck struct {
 func (v *Verifier) checkRRSet(z *dnssec.Zone, name string, rrtype uint16, mode dnssec.KeyVerifyMode, result *Result) (rrsetCheck, error) {
 	results := z.CheckRRSet(name, rrtype, mode, "")
 	ok, err := dnssec.RRSetVerified(results)
-	c := rrsetCheck{ok: ok, results: results}
+	c := rrsetCheck{ok: ok, sigs: sigChecks(name, results)}
 	if !ok {
 		c.code = sigFailureCode(results)
 	}
