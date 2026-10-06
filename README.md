@@ -18,7 +18,7 @@ parallel — see [`docs/SIBLING.md`](docs/SIBLING.md). Both descend from
 
 ## Status
 
-v0.9.0 — full end-to-end DNSSEC chain validation with NSEC / NSEC3
+v0.10.0 — full end-to-end DNSSEC chain validation with NSEC / NSEC3
 negative-proof support, CNAME / DNAME chasing, and wildcard-synthesised
 positive answer validation. DoH, DNS-over-TLS and plain UDP / TCP
 transports, and a `dnsview` diagnostic command.

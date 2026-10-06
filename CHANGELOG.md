@@ -6,10 +6,21 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-10-06
+
+Verifier results say why a validation failed and which signatures were
+checked, and verification can be streamed: `Result.ReasonCode` and
+`Result.Err()` (MUST 12), `ZoneStep.Signatures` (MUST 3),
+`WithStepHandler` (SHOULD 14). Each Verifier owns its RR handler
+registry (MUST NOT 22). **Breaking:** `NewVerifier` no longer registers
+the DNSSEC handlers in the package-wide registry; code that relied on it
+must call `dnssec.RegisterHandlers()` itself. Includes the 0.9.1
+security fixes. Coordinated release with dnsdata-js v0.10.0.
+
 ### Security
 
-- The DNSKEY authentication fixes released in 0.9.1 are on this
-  branch too, with the same `AddTrustedKey` / `AddSEP` / `FindDNSKeys`
+- The DNSKEY authentication fixes released in 0.9.1 are in this
+  release too, with the same `AddTrustedKey` / `AddSEP` / `FindDNSKeys`
   semantics; `CheckRRSIG` applies the same rules. In
   `ZoneStep.Signatures` an RRSIG by an unauthenticated key in KSK mode
   reports `no-matching-key`, a bad signature by an authenticated one

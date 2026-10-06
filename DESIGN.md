@@ -303,6 +303,8 @@ release; [`CHANGELOG.md`](CHANGELOG.md) has the detail and
 | v0.7.0 | RFC 3597 unknown types and shared round-trip vectors; strict zone reader; canonical output; `dnssec/signer`; `resolver/memory` with shared signed vectors; `Result.Answer`; RRSIG validity window enforced; RRSIG digest target ordered by RDATA alone | UP-010 – UP-015, UF-005, UF-006 |
 | v0.8.0 | CD bit on queries; TLSA / SMIMEA / SVCB / HTTPS presented by type; `\DDD` escapes for TXT and CAA; NSEC3 signing and NSEC3 proofs from `resolver/memory`; `resolver/dot`; received RDATA signed as is (`zone.NewResourceRecordWithRData`); DNAME, alias and wildcard NODATA verdicts fixed | UP-016 – UP-019, UF-007 |
 | v0.9.0 | `cmd/dnsview` diagnostic command: one JSON line per query with the `Result` as is; MUST NOT 20 / 24 scoped to the library packages | UP-020 |
+| v0.9.1 | Security: a DNSKEY rrset verifies only under the exact KSK matched by the parent DS or a trust anchor (`AddTrustedKey`; `AddSEP` deprecated); a DNSKEY is taken only from its own DNSKEY answer | — |
+| v0.10.0 | `Result.ReasonCode` / `Result.Err()`; `ZoneStep.Signatures` (per-RRSIG results); `WithStepHandler`; a handler `zone.Registry` per Verifier (`WithRegistry`), `NewVerifier` no longer registers globally; `ZoneStep.DSDigests` filled; MUST 4a – 4d added to the contract | — |
 
 The DoH client (UP-007) shipped in v0.1.0 and its dnsdata-js port
 landed with the dnsdata-js refactor.
