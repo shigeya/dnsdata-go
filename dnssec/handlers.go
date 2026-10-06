@@ -26,15 +26,27 @@ import (
 //	register_rr_handler(StringToRRType('RRSIG'),  ...)
 //	register_rr_handler(StringToRRType('DS'),     ...)
 //	...
+//
+// RegisterHandlers installs into [zone.DefaultRegistry];
+// [RegisterHandlersInto] installs the same set into a caller-owned
+// [zone.Registry].
 func RegisterHandlers() {
-	zone.RegisterRRHandler(types.TypeDNSKEY, dnsKeyFactory)
-	zone.RegisterRRHandler(types.TypeCDNSKEY, dnsKeyFactory) // RFC 7344 §3.2
-	zone.RegisterRRHandler(types.TypeRRSIG, rrsigFactory)
-	zone.RegisterRRHandler(types.TypeDS, dsFactory)
-	zone.RegisterRRHandler(types.TypeCDS, dsFactory) // RFC 7344 §3.1
-	zone.RegisterRRHandler(types.TypeNSEC, nsecFactory)
-	zone.RegisterRRHandler(types.TypeNSEC3, nsec3Factory)
-	zone.RegisterRRHandler(types.TypeNSEC3PARAM, nsec3ParamFactory)
+	RegisterHandlersInto(zone.DefaultRegistry())
+}
+
+// RegisterHandlersInto installs the DNSSEC RR-type handlers (the set
+// [RegisterHandlers] installs) into reg, leaving the default registry
+// untouched. Pair it with [Zone.SetRegistry] so a [Zone] resolves its
+// handlers through reg.
+func RegisterHandlersInto(reg *zone.Registry) {
+	reg.Register(types.TypeDNSKEY, dnsKeyFactory)
+	reg.Register(types.TypeCDNSKEY, dnsKeyFactory) // RFC 7344 §3.2
+	reg.Register(types.TypeRRSIG, rrsigFactory)
+	reg.Register(types.TypeDS, dsFactory)
+	reg.Register(types.TypeCDS, dsFactory) // RFC 7344 §3.1
+	reg.Register(types.TypeNSEC, nsecFactory)
+	reg.Register(types.TypeNSEC3, nsec3Factory)
+	reg.Register(types.TypeNSEC3PARAM, nsec3ParamFactory)
 }
 
 // dnsKeyFactory adapts [ParseDNSKey] into the [zone.HandlerFactory]

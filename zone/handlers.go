@@ -27,20 +27,30 @@ import (
 //
 // The final batch (OPT, EDNS(0)) is intentionally standalone and not
 // registered here — OPT records have no registry presence in zone files.
+//
+// RegisterHandlers installs into [DefaultRegistry]; [RegisterHandlersInto]
+// installs the same set into a caller-owned [Registry].
 func RegisterHandlers() {
-	RegisterRRHandler(types.TypeTLSA, tlsaFactory)
-	RegisterRRHandler(types.TypeSMIMEA, smimeaFactory) // RFC 8162, shares TLSA wire format
-	RegisterRRHandler(types.TypeSSHFP, sshfpFactory)
-	RegisterRRHandler(types.TypeOPENPGPKEY, openpgpkeyFactory)
-	RegisterRRHandler(types.TypeCERT, certFactory)
-	RegisterRRHandler(types.TypeURI, uriFactory)
-	RegisterRRHandler(types.TypeHINFO, hinfoFactory)
-	RegisterRRHandler(types.TypeRP, rpFactory)
-	RegisterRRHandler(types.TypeEUI48, eui48Factory)
-	RegisterRRHandler(types.TypeEUI64, eui64Factory) // RFC 7043 §4, shares EUI48 wire shape
-	RegisterRRHandler(types.TypeCSYNC, csyncFactory)
-	RegisterRRHandler(types.TypeLOC, locFactory)
-	RegisterRRHandler(types.TypeNAPTR, naptrFactory)
-	RegisterRRHandler(types.TypeSVCB, svcbFactory)
-	RegisterRRHandler(types.TypeHTTPS, httpsFactory) // RFC 9460 §9.1, shares SVCB wire format
+	RegisterHandlersInto(defaultRegistry)
+}
+
+// RegisterHandlersInto installs the bundled zone RR-type handlers (the
+// set [RegisterHandlers] installs) into reg, leaving the default
+// registry untouched.
+func RegisterHandlersInto(reg *Registry) {
+	reg.Register(types.TypeTLSA, tlsaFactory)
+	reg.Register(types.TypeSMIMEA, smimeaFactory) // RFC 8162, shares TLSA wire format
+	reg.Register(types.TypeSSHFP, sshfpFactory)
+	reg.Register(types.TypeOPENPGPKEY, openpgpkeyFactory)
+	reg.Register(types.TypeCERT, certFactory)
+	reg.Register(types.TypeURI, uriFactory)
+	reg.Register(types.TypeHINFO, hinfoFactory)
+	reg.Register(types.TypeRP, rpFactory)
+	reg.Register(types.TypeEUI48, eui48Factory)
+	reg.Register(types.TypeEUI64, eui64Factory) // RFC 7043 §4, shares EUI48 wire shape
+	reg.Register(types.TypeCSYNC, csyncFactory)
+	reg.Register(types.TypeLOC, locFactory)
+	reg.Register(types.TypeNAPTR, naptrFactory)
+	reg.Register(types.TypeSVCB, svcbFactory)
+	reg.Register(types.TypeHTTPS, httpsFactory) // RFC 9460 §9.1, shares SVCB wire format
 }

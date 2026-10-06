@@ -40,11 +40,35 @@ const (
 // A pointer receiver is used throughout because the embedded
 // *zone.Zone is itself a pointer; constructing via `&dnssec.Zone{}`
 // gives a ready-to-use, empty zone.
+//
+// Record handlers (DNSKEY, RRSIG, DS, …) are resolved through the zone's
+// [zone.Registry] ([Zone.SetRegistry]; the default registry when none is
+// set), both for lookups and for the RDATA encoding of digest targets.
 type Zone struct {
 	*zone.Zone
-	parent *Zone
-	seps   []string
-	now    func() time.Time
+	parent   *Zone
+	seps     []string
+	now      func() time.Time
+	registry *zone.Registry
+}
+
+// SetRegistry makes the zone resolve record handlers through reg. A nil
+// reg means [zone.DefaultRegistry]. Fill reg with [RegisterHandlersInto]
+// (and [zone.RegisterHandlersInto] for the zone types).
+func (z *Zone) SetRegistry(reg *zone.Registry) { z.registry = reg }
+
+// Registry returns the registry the zone resolves handlers through.
+func (z *Zone) Registry() *zone.Registry {
+	if z.registry == nil {
+		return zone.DefaultRegistry()
+	}
+	return z.registry
+}
+
+// Handler returns rr's handler from the zone's registry
+// ([zone.ResourceRecord.HandlerFrom]).
+func (z *Zone) Handler(rr *zone.ResourceRecord) zone.RecordHandler {
+	return rr.HandlerFrom(z.Registry())
 }
 
 // SetClock makes [Zone.VerifyRRSIG] reject an RRSIG whose validity
@@ -111,7 +135,7 @@ func (z *Zone) FindRRSIGs(name string, typeCovered uint16, signer string) []*RRS
 	candidates := z.FindRRSet(name, types.TypeRRSIG)
 	var out []*RRSig
 	for _, rr := range candidates {
-		h, ok := rr.Handler().(*RRSig)
+		h, ok := z.Handler(rr).(*RRSig)
 		if !ok {
 			continue
 		}
@@ -131,7 +155,7 @@ func (z *Zone) FindRRSIGs(name string, typeCovered uint16, signer string) []*RRS
 func (z *Zone) FindDNSKey(signerName string, keyTag uint16) *DNSKey {
 	candidates := z.FindRRSet(signerName, types.TypeDNSKEY)
 	for _, rr := range candidates {
-		h, ok := rr.Handler().(*DNSKey)
+		h, ok := z.Handler(rr).(*DNSKey)
 		if !ok {
 			continue
 		}
@@ -174,7 +198,7 @@ func (z *Zone) CreateDigestTarget(rrsig *RRSig, name string, typeCovered uint16)
 	bodies := make([][]byte, 0, len(rrset))
 	for _, rr := range rrset {
 		var b wire.Builder
-		if err := rr.WireBody(&b); err != nil {
+		if err := rr.WireBodyWith(z.Registry(), &b); err != nil {
 			return nil, fmt.Errorf("%w: wire body for %s: %v", ErrDNSSEC, rr.Label, err)
 		}
 		body := b.Clone()
@@ -330,7 +354,7 @@ func (z *Zone) verifyDelegationSigner(dnskey *DNSKey) (bool, error) {
 	}
 
 	for _, rr := range dsSet {
-		ds, ok := rr.Handler().(*DS)
+		ds, ok := z.Handler(rr).(*DS)
 		if !ok {
 			continue
 		}

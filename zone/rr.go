@@ -6,14 +6,15 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
+	"sync/atomic"
 
 	"github.com/shigeya/dnsdata-go/types"
 	"github.com/shigeya/dnsdata-go/wire"
 )
 
 // HandlerFactory constructs a [RecordHandler] for a given parent record and
-// its presentation-form value. Registered through [RegisterRRHandler].
+// its presentation-form value. Registered through [Registry.Register] or
+// [RegisterRRHandler].
 type HandlerFactory func(rr *ResourceRecord, value string) RecordHandler
 
 // RecordHandler is the abstract data handler for a single RR type. Each
@@ -31,44 +32,20 @@ type RecordHandler interface {
 	Clone() RecordHandler
 }
 
-// Registry stores RR-type handler factories keyed by [types.Type*] code.
-// Used by dnssec_rr.go (future) to plug DNSKEY / RRSIG / DS / NSEC /
-// NSEC3 handlers without modifying this package.
-//
-// The registry is package-global to match dnsdata-js's
-// register_rr_handler shape. If future requirements demand isolation,
-// switch to a per-[Zone] registry; see UPSTREAM_FEEDBACK / DESIGN.md.
-var (
-	registryMu sync.RWMutex
-	registry   = map[uint16]HandlerFactory{}
-)
-
-// RegisterRRHandler installs factory as the handler builder for RRs of
-// the given type. Subsequent calls overwrite earlier ones.
-func RegisterRRHandler(rrtype uint16, factory HandlerFactory) {
-	registryMu.Lock()
-	defer registryMu.Unlock()
-	registry[rrtype] = factory
-}
-
-// lookupRRHandler is the read side of the registry.
-func lookupRRHandler(rrtype uint16) HandlerFactory {
-	registryMu.RLock()
-	defer registryMu.RUnlock()
-	return registry[rrtype]
-}
-
 // ResourceRecord is the textual form of a single DNS RR. The presentation
 // value (`Value`) is stored verbatim; structured RDATA is parsed lazily
 // by the handler (if any) or by the built-in switch in [ResourceRecord.WireBody].
+//
+// A ResourceRecord must not be copied after first use (it caches its
+// handler); pass it by pointer.
 type ResourceRecord struct {
 	Label   string
 	TTL     uint32
 	Class   uint16
 	Type    uint16
 	Value   string
-	handler RecordHandler
-	rdata   []byte // the RDATA as received, see NewResourceRecordWithRData
+	handler atomic.Pointer[handlerEntry] // see HandlerFrom
+	rdata   []byte                       // the RDATA as received, see NewResourceRecordWithRData
 }
 
 // NewResourceRecordWithRData is [NewResourceRecord] for a record read
@@ -144,31 +121,55 @@ func coerceType(v any) (uint16, error) {
 	return 0, fmt.Errorf("%w: unsupported type %T", ErrPresentationFormat, v)
 }
 
-// Handler returns the type-specific handler for this RR (constructing it
-// on first access via the registered factory), or nil if no factory is
-// registered for the type. Result is cached on the record.
+// Handler returns the type-specific handler for this RR built by the
+// default registry's factory; see [ResourceRecord.HandlerFrom].
+func (rr *ResourceRecord) Handler() RecordHandler {
+	return rr.HandlerFrom(defaultRegistry)
+}
+
+// HandlerFrom returns the type-specific handler for this RR built by
+// reg's factory (constructing it on first access), or nil if reg has no
+// factory for the type. A nil reg means [DefaultRegistry].
 //
 // A value in RFC 3597 generic form (`\# <len> <hex>`) is decoded from
 // its octets by type, so a known type received as generic RDATA still
 // yields its structured handler.
-func (rr *ResourceRecord) Handler() RecordHandler {
-	if rr.handler != nil {
-		return rr.handler
+//
+// The handler is cached on the record together with the Registry that
+// built it, and the cache is only returned to a caller passing that same
+// Registry: a record shared between users of different registries (for
+// example two Verifiers sharing one cache) never hands one registry's
+// handler to the other. The cache holds one entry; alternating
+// registries rebuild the handler. Safe for concurrent use.
+func (rr *ResourceRecord) HandlerFrom(reg *Registry) RecordHandler {
+	reg = reg.orDefault()
+	if e := rr.handler.Load(); e != nil && e.reg == reg {
+		return e.handler
 	}
-	f := lookupRRHandler(rr.Type)
+	f := reg.Lookup(rr.Type)
 	if f == nil {
 		return nil
 	}
+	h := rr.buildHandler(f)
+	if h == nil {
+		return nil
+	}
+	rr.handler.Store(&handlerEntry{reg: reg, handler: h})
+	return h
+}
+
+// buildHandler runs factory on the record's value, decoding a generic
+// value by type first. Returns nil when the value does not decode.
+func (rr *ResourceRecord) buildHandler(factory HandlerFactory) RecordHandler {
 	raw, isGeneric, err := rr.GenericRData()
 	switch {
 	case err != nil:
 		return nil
 	case isGeneric:
-		rr.handler = handlerFromGeneric(rr, f, raw)
+		return handlerFromGeneric(rr, factory, raw)
 	default:
-		rr.handler = f(rr, rr.Value)
+		return factory(rr, rr.Value)
 	}
-	return rr.handler
 }
 
 // WireHeader appends `owner_name(wire) + type(uint16) + class(uint16)` to b.
@@ -203,7 +204,16 @@ func (rr *ResourceRecord) WireHeader(b *wire.Builder) error {
 // have built-in encoders. Returns [ErrRDataFormat] when an encoder recognises the type but the
 // value is malformed, and [ErrPresentationFormat] for malformed generic
 // RDATA.
+//
+// The handler comes from the default registry; [ResourceRecord.WireBodyWith]
+// takes the registry explicitly.
 func (rr *ResourceRecord) WireBody(b *wire.Builder) error {
+	return rr.WireBodyWith(defaultRegistry, b)
+}
+
+// WireBodyWith is [ResourceRecord.WireBody] with the handler taken from
+// reg (nil means [DefaultRegistry]) through [ResourceRecord.HandlerFrom].
+func (rr *ResourceRecord) WireBodyWith(reg *Registry, b *wire.Builder) error {
 	raw, isGeneric, err := rr.GenericRData()
 	if err != nil {
 		return err
@@ -212,7 +222,7 @@ func (rr *ResourceRecord) WireBody(b *wire.Builder) error {
 		writeWireGeneric(b, raw)
 		return nil
 	}
-	if h := rr.Handler(); h != nil {
+	if h := rr.HandlerFrom(reg); h != nil {
 		return h.WireBody(b)
 	}
 	switch rr.Type {
