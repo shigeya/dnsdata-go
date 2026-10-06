@@ -6,6 +6,31 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.9.1] — 2026-10-06
+
+A security fix release: v0.9.0 plus the fixes below, nothing else.
+
+### Security
+
+- **DNSKEY rrset signatures in KSK mode were not checked, and
+  unauthenticated keys were accepted as KSKs.** An RRSIG over a DNSKEY
+  rrset by a SEP-flagged key was taken as verified without checking its
+  signature, any key at a name marked with `AddSEP` (which the verifier
+  set for every zone) passed as a KSK, and a key without the SEP flag
+  skipped the KSK check. Affects v0.1.0 through v0.9.0. A DNSKEY rrset
+  now verifies only under the exact key matched by the parent's DS or a
+  trust anchor (`dnssec.Zone.AddTrustedKey`; `AddSEP` is deprecated and
+  no longer authenticates), whatever its SEP flag, trying every key with
+  the RRSIG's key tag and algorithm.
+- **DNSKEYs were taken from the answers to other queries.** A DNSKEY in
+  the answer to the leaf query or a DS query joined the zone after its
+  DNSKEY rrset was authenticated. Affects v0.1.0 through v0.9.0. A DNSKEY
+  is now taken only from the answer to the DNSKEY query for its owner.
+- Verdict change: forged data that validated Secure is now Bogus; a zone
+  whose DS-matched KSK lacks the SEP flag now validates Secure instead of
+  Bogus. New API: `dnssec.Zone.AddTrustedKey`, `IsTrustedKey`,
+  `FindDNSKeys`.
+
 ## [0.9.0] — 2026-10-05
 
 A diagnostic command, `dnsview`, that shows query by query what the
