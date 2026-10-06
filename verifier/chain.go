@@ -159,7 +159,7 @@ func (v *Verifier) validateOneHop(ctx context.Context, qname string, qtype uint1
 		return bogusOutcome(result.BogusAt, result.BogusReason, result.ReasonCode), nil
 	}
 	if !zoneAlreadyInChain(result, ".") {
-		result.Chain = append(result.Chain, summarizeZone(".", rootZone, rootKSK))
+		result.Chain = append(result.Chain, summarizeZone(".", rootZone, nil, rootKSK))
 	}
 
 	// Step 2: descend through each label boundary that's actually a
@@ -177,7 +177,7 @@ func (v *Verifier) validateOneHop(ctx context.Context, qname string, qtype uint1
 		switch status {
 		case descendDescended:
 			if !zoneAlreadyInChain(result, childName) {
-				result.Chain = append(result.Chain, summarizeZone(childName, childZone, childKSK))
+				result.Chain = append(result.Chain, summarizeZone(childName, childZone, currentZone, childKSK))
 			}
 			currentZone = childZone
 			currentName = childName
@@ -596,8 +596,10 @@ func matchKSKWithDS(childZone, parentZone *dnssec.Zone, childName string) (*dnss
 	return nil, fmt.Errorf("no DNSKEY at %s matched a DS in parent", childName)
 }
 
-// summarizeZone collects a [ZoneStep] for the result chain.
-func summarizeZone(zoneName string, z *dnssec.Zone, ksk *dnssec.DNSKey) ZoneStep {
+// summarizeZone collects a [ZoneStep] for the result chain. The DS
+// records are read from parent, which the descent loaded them into
+// (nil for the root).
+func summarizeZone(zoneName string, z, parent *dnssec.Zone, ksk *dnssec.DNSKey) ZoneStep {
 	step := ZoneStep{Zone: zoneName}
 	for _, rr := range z.FindRRSet(zoneName, types.TypeDNSKEY) {
 		k, ok := z.Handler(rr).(*dnssec.DNSKey)
@@ -610,17 +612,7 @@ func summarizeZone(zoneName string, z *dnssec.Zone, ksk *dnssec.DNSKey) ZoneStep
 			SEP:       k.IsSecureEntryPoint(),
 		})
 	}
-	for _, rr := range z.FindRRSet(zoneName, types.TypeDS) {
-		ds, ok := z.Handler(rr).(*dnssec.DS)
-		if !ok {
-			continue
-		}
-		step.DSDigests = append(step.DSDigests, DSSummary{
-			KeyTag:     ds.KeyTag,
-			Algorithm:  ds.Algorithm,
-			DigestType: ds.DigestType,
-		})
-	}
+	step.DSDigests = summarizeDS(zoneName, parent)
 	if ksk != nil {
 		step.SignedBy = &KeySummary{
 			KeyTag:    ksk.KeyTag,
@@ -629,6 +621,26 @@ func summarizeZone(zoneName string, z *dnssec.Zone, ksk *dnssec.DNSKey) ZoneStep
 		}
 	}
 	return step
+}
+
+// summarizeDS lists the DS records for zoneName held by parent.
+func summarizeDS(zoneName string, parent *dnssec.Zone) []DSSummary {
+	if parent == nil {
+		return nil
+	}
+	var out []DSSummary
+	for _, rr := range parent.FindRRSet(zoneName, types.TypeDS) {
+		ds, ok := parent.Handler(rr).(*dnssec.DS)
+		if !ok {
+			continue
+		}
+		out = append(out, DSSummary{
+			KeyTag:     ds.KeyTag,
+			Algorithm:  ds.Algorithm,
+			DigestType: ds.DigestType,
+		})
+	}
+	return out
 }
 
 // descendantZones returns the proper-suffix zone names of qname, from

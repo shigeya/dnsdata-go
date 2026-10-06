@@ -74,6 +74,12 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 - The handler cache on `zone.ResourceRecord` is now safe for concurrent
   use; a `ResourceRecord` must not be copied by value.
 
+### Fixed
+
+- `verifier.ZoneStep.DSDigests` was always empty: it was read from the
+  child zone, while the DS records live in the parent's response. It
+  now lists the DS records that authorised the descent into the zone.
+
 ## [0.9.0] — 2026-10-05
 
 A diagnostic command, `dnsview`, that shows query by query what the
