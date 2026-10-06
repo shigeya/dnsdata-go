@@ -28,6 +28,14 @@ this project adheres to [Semantic Versioning](https://semver.org/).
   package one).
 - `verifier.WithRegistry(reg)`: the registry a Verifier resolves
   handlers through.
+- `dnssec.SigStatus` (`SigVerified`, `SigExpired`, `SigNotYetValid`,
+  `SigUnsupportedAlgorithm`, `SigNoMatchingKey`, `SigInvalid`; `String()`
+  gives `verified`, `expired`, `not-yet-valid`, `unsupported-algorithm`,
+  `no-matching-key`, `invalid`), `Zone.CheckRRSIG` (one RRSIG: why it
+  failed), `Zone.CheckRRSet` (every RRSIG over an rrset, as
+  `[]dnssec.SigResult{RRSig, Status, Err}`) and `dnssec.RRSetVerified`
+  (folds those into `VerifyRRSet`'s answer). `VerifyRRSIG` is now
+  `CheckRRSIG` reduced to a bool; its results are unchanged.
 
 ### Changed
 

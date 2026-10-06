@@ -77,16 +77,6 @@ func (z *Zone) Handler(rr *zone.ResourceRecord) zone.RecordHandler {
 // window is not checked.
 func (z *Zone) SetClock(now func() time.Time) { z.now = now }
 
-// withinValidity reports whether rrsig's window contains the zone's
-// clock, or true when no clock is set.
-func (z *Zone) withinValidity(rrsig *RRSig) bool {
-	if z.now == nil {
-		return true
-	}
-	t := z.now().Unix()
-	return rrsig.Inception <= t && t <= rrsig.Expire
-}
-
 // NewZone constructs an empty DNSSEC zone.
 func NewZone() *Zone {
 	return &Zone{Zone: &zone.Zone{}}
@@ -245,52 +235,10 @@ func registrationFor(rrtype uint16) string {
 // (true, nil) on success; (false, nil) when verification fails for a
 // non-erroneous reason (missing key, signature mismatch); (false, err)
 // when the verification could not be attempted at all.
+// [Zone.CheckRRSIG] makes the same check and says why it failed.
 func (z *Zone) VerifyRRSIG(name string, typeCovered uint16, rrsig *RRSig, mode KeyVerifyMode) (bool, error) {
-	if !z.withinValidity(rrsig) {
-		return false, nil
-	}
-	dnskey := z.FindDNSKey(rrsig.Signer, rrsig.KeyTag)
-	if dnskey == nil {
-		return false, nil
-	}
-
-	switch mode {
-	case KeyModeZSK:
-		if !dnskey.IsSecureEntryPoint() {
-			ok, err := z.verifyZSK(dnskey)
-			if err != nil || !ok {
-				return ok, err
-			}
-		}
-	case KeyModeKSK:
-		if dnskey.IsSecureEntryPoint() {
-			ok, err := z.verifyKSK(dnskey)
-			if err != nil || !ok {
-				return ok, err
-			}
-			if typeCovered == types.TypeDNSKEY {
-				// RFC 4035 §5.3.2: signature on DNSKEY rrset by a ZSK
-				// is ignored when explicitly asked for KSK-mode trust.
-				return true, nil
-			}
-		}
-	case KeyModeCSK:
-		if dnskey.IsSecureEntryPoint() {
-			ok, err := z.verifyKSK(dnskey)
-			if err != nil || !ok {
-				return ok, err
-			}
-		}
-	}
-
-	digestTarget, err := z.CreateDigestTarget(rrsig, name, typeCovered)
-	if err != nil {
-		return false, err
-	}
-	if digestTarget == nil {
-		return false, nil
-	}
-	return dnskey.Verify(digestTarget, rrsig.Signature)
+	s, err := z.CheckRRSIG(name, typeCovered, rrsig, mode)
+	return s == SigVerified, err
 }
 
 // VerifyRRSet applies RFC 4035 §5.3.3 "any-valid" semantics: the RRset
