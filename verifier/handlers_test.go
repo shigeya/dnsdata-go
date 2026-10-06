@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
+	"errors"
 	"flag"
 	"net"
 	"os"
@@ -51,6 +52,21 @@ var zoneHandlerTypes = map[uint16]bool{
 	types.TypeTLSA: true, types.TypeSMIMEA: true, types.TypeSVCB: true, types.TypeHTTPS: true,
 }
 
+// handlersClock is inside the validity window of testdata/handlers.
+var handlersClock = time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+
+// zoneHandlerAnswers are the zone-handler-type records of
+// handlersZoneText, in presentation form.
+var zoneHandlerAnswers = []struct {
+	qname, value string
+	qtype        uint16
+}{
+	{"svc.example.test.", "1 target.example.", types.TypeSVCB},
+	{"www.example.test.", "1 . alpn=h2", types.TypeHTTPS},
+	{"_443._tcp.www.example.test.", "3 1 1 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff", types.TypeTLSA},
+	{"x._smimecert.example.test.", "3 0 1 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff", types.TypeSMIMEA},
+}
+
 // TestNewVerifier_ValidatesZoneHandlerTypesOverTheWire validates TLSA,
 // SMIMEA, SVCB and HTTPS answers received by the auth client, with the
 // Verifier's default registry (DNSSEC handlers only): the octets the
@@ -60,17 +76,8 @@ func TestNewVerifier_ValidatesZoneHandlerTypesOverTheWire(t *testing.T) {
 		writeHandlersZone(t)
 	}
 	auth, anchors := handlersWireResolver(t)
-	clock := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	cases := []struct {
-		qname, value string
-		qtype        uint16
-	}{
-		{"svc.example.test.", "1 target.example.", types.TypeSVCB},
-		{"www.example.test.", "1 . alpn=h2", types.TypeHTTPS},
-		{"_443._tcp.www.example.test.", "3 1 1 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff", types.TypeTLSA},
-		{"x._smimecert.example.test.", "3 0 1 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff", types.TypeSMIMEA},
-	}
-	for _, c := range cases {
+	clock := handlersClock
+	for _, c := range zoneHandlerAnswers {
 		t.Run(types.RRTypeName(c.qtype), func(t *testing.T) {
 			v, err := verifier.NewVerifier(
 				verifier.WithResolver(verifier.ResolverFunc(auth.Resolve)),
@@ -118,14 +125,100 @@ func TestNewVerifier_NoEncoderNamesTheRegistration(t *testing.T) {
 	if *updateHandlers {
 		t.Skip("the signer registered every handler")
 	}
+	authority, anchors := presentedAuthority(t)
+	v, err := verifier.NewVerifier(
+		verifier.WithResolver(authority),
+		verifier.WithTrustAnchors(anchors),
+		verifier.WithClock(func() time.Time { return handlersClock }),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = v.Validate(context.Background(), "svc.example.test.", types.TypeSVCB)
+	if err == nil || !strings.Contains(err.Error(), "verifier.WithZoneHandlers") {
+		t.Fatalf("error %v, want one naming verifier.WithZoneHandlers", err)
+	}
+}
+
+// TestNewVerifier_ValidatesPresentedZoneHandlerTypes validates TLSA,
+// SMIMEA, SVCB and HTTPS answers that an in-memory authority returns in
+// presentation form without their octets, with the zone handlers in the
+// Verifier's own registry: through WithZoneHandlers, and through
+// WithRegistry with both handler sets. The default registry is left
+// without them.
+func TestNewVerifier_ValidatesPresentedZoneHandlerTypes(t *testing.T) {
+	if *updateHandlers {
+		t.Skip("the signer registered every handler")
+	}
+	authority, anchors := presentedAuthority(t)
+	both := zone.NewRegistry()
+	dnssec.RegisterHandlersInto(both)
+	zone.RegisterHandlersInto(both)
+	options := map[string]verifier.Option{
+		"WithZoneHandlers": verifier.WithZoneHandlers(),
+		"WithRegistry":     verifier.WithRegistry(both),
+	}
+	for name, opt := range options {
+		for _, c := range zoneHandlerAnswers {
+			t.Run(name+"/"+types.RRTypeName(c.qtype), func(t *testing.T) {
+				v, err := verifier.NewVerifier(
+					verifier.WithResolver(authority),
+					verifier.WithTrustAnchors(anchors),
+					verifier.WithClock(func() time.Time { return handlersClock }),
+					opt,
+				)
+				if err != nil {
+					t.Fatal(err)
+				}
+				res, err := v.Validate(context.Background(), c.qname, c.qtype)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if res.Verdict != verifier.VerdictSecure {
+					t.Fatalf("verdict %s, want secure (%+v)", res.Verdict, res)
+				}
+				if res.Answer == nil || len(res.Answer.Records) != 1 || res.Answer.Records[0].Value != c.value {
+					t.Fatalf("answer %+v, want one %s record %q", res.Answer, types.RRTypeName(c.qtype), c.value)
+				}
+			})
+		}
+	}
+	for rrtype := range zoneHandlerTypes {
+		if zone.DefaultRegistry().Lookup(rrtype) != nil {
+			t.Errorf("%s handler is registered in the default registry", types.RRTypeName(rrtype))
+		}
+	}
+}
+
+// TestNewVerifier_ZoneHandlersExcludeRegistry checks that
+// WithZoneHandlers and WithRegistry together are a configuration error.
+func TestNewVerifier_ZoneHandlersExcludeRegistry(t *testing.T) {
+	_, err := verifier.NewVerifier(
+		verifier.WithResolver(verifier.ResolverFunc(nil)),
+		verifier.WithZoneHandlers(),
+		verifier.WithRegistry(zone.NewRegistry()),
+	)
+	if !errors.Is(err, verifier.ErrConfig) {
+		t.Fatalf("error %v, want ErrConfig", err)
+	}
+}
+
+// presentedAuthority serves the signed zone of testdata/handlers with
+// its zone-handler-type records in presentation form, as an in-memory
+// authority returns records it holds as text (no RDATA octets).
+func presentedAuthority(t *testing.T) (*memory.Authority, *dnssec.RootAnchors) {
+	t.Helper()
 	text, err := os.ReadFile(filepath.Join(handlersDir, "root.zone"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	var z zone.Zone
 	for _, line := range strings.Split(strings.TrimSpace(string(text)), "\n") {
-		if strings.HasPrefix(line, "svc.example.test. 3600 IN SVCB ") {
-			line = "svc.example.test. 3600 IN SVCB 1 target.example."
+		for _, c := range zoneHandlerAnswers {
+			prefix := c.qname + " 3600 IN " + types.RRTypeName(c.qtype) + " "
+			if strings.HasPrefix(line, prefix) {
+				line = prefix + c.value
+			}
 		}
 		if err := z.ReadString(line); err != nil {
 			t.Fatal(err)
@@ -136,18 +229,7 @@ func TestNewVerifier_NoEncoderNamesTheRegistration(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, anchors := handlersWireResolver(t)
-	v, err := verifier.NewVerifier(
-		verifier.WithResolver(authority),
-		verifier.WithTrustAnchors(anchors),
-		verifier.WithClock(func() time.Time { return time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC) }),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = v.Validate(context.Background(), "svc.example.test.", types.TypeSVCB)
-	if err == nil || !strings.Contains(err.Error(), "zone.RegisterHandlers") {
-		t.Fatalf("error %v, want one naming zone.RegisterHandlers", err)
-	}
+	return authority, anchors
 }
 
 // handlersWireResolver serves the signed zone from an in-memory

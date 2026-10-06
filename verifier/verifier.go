@@ -20,7 +20,9 @@ type Verifier struct {
 	now      func() time.Time
 	cache    Cache
 	registry *zone.Registry
-	onStep   func(StepEvent)
+	// zoneHandlers is set by [WithZoneHandlers].
+	zoneHandlers bool
+	onStep       func(StepEvent)
 }
 
 // Option configures a [Verifier] at construction time.
@@ -69,9 +71,25 @@ func WithCache(c Cache) Option {
 // validation to succeed. A nil reg is equivalent to not setting the
 // option. Passing [zone.DefaultRegistry] shares the process-wide
 // registry, and with it the handlers that [zone.ResourceRecord.Handler]
-// returns.
+// returns. It cannot be combined with [WithZoneHandlers].
 func WithRegistry(reg *zone.Registry) Option {
 	return func(v *Verifier) { v.registry = reg }
+}
+
+// WithZoneHandlers adds the bundled zone handlers
+// ([zone.RegisterHandlersInto]: TLSA, SMIMEA, SVCB, HTTPS, …) to the
+// Verifier's own registry, next to the DNSSEC handlers. Use it when the
+// resolver returns records in presentation form without their RDATA
+// octets, e.g. an in-memory authority built from zone text, so that
+// they encode for signature checks. It is the shorthand for the
+// [WithRegistry] example above and, like the default, leaves
+// [zone.DefaultRegistry] untouched. [NewVerifier] returns [ErrConfig]
+// if [WithRegistry] is also given.
+//
+// A record that does carry its octets is then encoded by its handler
+// from the presentation form rather than written as received.
+func WithZoneHandlers() Option {
+	return func(v *Verifier) { v.zoneHandlers = true }
 }
 
 // NewVerifier constructs a Verifier with the supplied options. A
@@ -83,7 +101,9 @@ func WithRegistry(reg *zone.Registry) Option {
 // NewVerifier does not touch [zone.DefaultRegistry] (DESIGN.md MUST NOT
 // 22). The zone handlers are not in the default set: an answer the
 // resolver clients received (TLSA, SVCB, …) carries its RDATA octets,
-// which sign as they are ([zone.NewResourceRecordWithRData]).
+// which sign as they are ([zone.NewResourceRecordWithRData]). A
+// resolver that returns such records without their octets needs
+// [WithZoneHandlers].
 //
 // Records are shared with the resolver and any [Cache]. A handler
 // cached on a record is tied to the registry that built it
@@ -100,9 +120,15 @@ func NewVerifier(opts ...Option) (*Verifier, error) {
 	if v.resolver == nil {
 		return nil, fmt.Errorf("%w: WithResolver is required", ErrConfig)
 	}
+	if v.registry != nil && v.zoneHandlers {
+		return nil, fmt.Errorf("%w: WithRegistry and WithZoneHandlers are exclusive", ErrConfig)
+	}
 	if v.registry == nil {
 		v.registry = zone.NewRegistry()
 		dnssec.RegisterHandlersInto(v.registry)
+		if v.zoneHandlers {
+			zone.RegisterHandlersInto(v.registry)
+		}
 	}
 	return v, nil
 }
