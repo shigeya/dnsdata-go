@@ -8,43 +8,12 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Security
 
-- **A key injected into a zone's DNSKEY rrset could make attacker-signed
-  data validate Secure** (root included). Affects every release from
-  v0.1.0 up to and including v0.9.0. In `KeyModeKSK`, an RRSIG over a
-  DNSKEY rrset by a SEP-flagged key that passed the KSK check was
-  reported verified without checking its signature; the KSK check
-  accepted any key whose owner name was marked with `AddSEP` (which the
-  verifier did for every zone after its DS / trust-anchor match); a key
-  without the SEP flag skipped the KSK check altogether; and only the
-  first DNSKEY with the RRSIG's key tag was tried. Now, in `KeyModeKSK`
-  an RRSIG verifies only when its signature verifies under a DNSKEY
-  (with the RRSIG's signer, key tag and algorithm) that is itself
-  authenticated: equal (owner, flags, protocol, algorithm, public key)
-  to a key added with `dnssec.Zone.AddTrustedKey`, or matched by a DS
-  record at its owner name in the parent zone. `KeyModeZSK` accepts any
-  key of a DNSKEY rrset that verifies that way, `KeyModeCSK` either,
-  and other mode values none. The SEP flag is no longer consulted
-  anywhere in validation (RFC 4034 §2.1.1): the verifier trusts exactly
-  the keys that match the parent's validated DS rrset, or the trust
-  anchors, whatever their flags, so a zone whose DS-matched KSK lacks
-  the SEP flag (Bogus before) now validates. Every DNSKEY sharing the
-  RRSIG's key tag and algorithm is tried. In `ZoneStep.Signatures` an
-  RRSIG by an unauthenticated key in KSK mode reports
-  `no-matching-key`, a bad signature by an authenticated one `invalid`.
-- **A DNSKEY carried in the answer to any other query became a signing
-  key of the zone** after its DNSKEY rrset had been authenticated, so
-  data signed by it (checked in `KeyModeNone`) validated Secure.
-  Affects v0.1.0 through v0.9.0. The verifier now takes a DNSKEY only
-  from the answer to the DNSKEY query for its owner name, and drops
-  (from the zone and from `Evidence.DNSKEYs`) any other.
-- `dnssec.Zone.AddSEP` is deprecated and no longer authenticates any
-  key (`IsSecureEntryPoint` still reports the mark). Code that used it
-  to trust a zone's keys must call `AddTrustedKey` with the key itself.
-  A zone with no parent no longer matches DS records held at its own
-  apex: without a parent only `AddTrustedKey` authenticates a KSK.
-- Added `dnssec.Zone.AddTrustedKey`, `IsTrustedKey` and
-  `FindDNSKeys(signer, keyTag, algorithm)` (every candidate key;
-  `FindDNSKey` still returns the first by tag).
+- The DNSKEY authentication fixes released in 0.9.1 are on this
+  branch too, with the same `AddTrustedKey` / `AddSEP` / `FindDNSKeys`
+  semantics; `CheckRRSIG` applies the same rules. In
+  `ZoneStep.Signatures` an RRSIG by an unauthenticated key in KSK mode
+  reports `no-matching-key`, a bad signature by an authenticated one
+  `invalid`.
 
 ### Added
 
@@ -149,6 +118,31 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 - `verifier.ZoneStep.DSDigests` was always empty: it was read from the
   child zone, while the DS records live in the parent's response. It
   now lists the DS records that authorised the descent into the zone.
+
+## [0.9.1] — 2026-10-06
+
+A security fix release: v0.9.0 plus the fixes below, nothing else.
+
+### Security
+
+- **DNSKEY rrset signatures in KSK mode were not checked, and
+  unauthenticated keys were accepted as KSKs.** An RRSIG over a DNSKEY
+  rrset by a SEP-flagged key was taken as verified without checking its
+  signature, any key at a name marked with `AddSEP` (which the verifier
+  set for every zone) passed as a KSK, and a key without the SEP flag
+  skipped the KSK check. Affects v0.1.0 through v0.9.0. A DNSKEY rrset
+  now verifies only under the exact key matched by the parent's DS or a
+  trust anchor (`dnssec.Zone.AddTrustedKey`; `AddSEP` is deprecated and
+  no longer authenticates), whatever its SEP flag, trying every key with
+  the RRSIG's key tag and algorithm.
+- **DNSKEYs were taken from the answers to other queries.** A DNSKEY in
+  the answer to the leaf query or a DS query joined the zone after its
+  DNSKEY rrset was authenticated. Affects v0.1.0 through v0.9.0. A DNSKEY
+  is now taken only from the answer to the DNSKEY query for its owner.
+- Verdict change: forged data that validated Secure is now Bogus; a zone
+  whose DS-matched KSK lacks the SEP flag now validates Secure instead of
+  Bogus. New API: `dnssec.Zone.AddTrustedKey`, `IsTrustedKey`,
+  `FindDNSKeys`.
 
 ## [0.9.0] — 2026-10-05
 
