@@ -6,6 +6,30 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.10.1] — 2026-10-06
+
+Completes the 0.10.0 migration note for code that relied on the zone
+handlers (TLSA, SMIMEA, SVCB, HTTPS, …) registered globally, and adds a
+one-line way to give a Verifier its own copy of them. The default
+Verifier is unchanged. Coordinated release with dnsdata-js v0.10.1.
+
+### Added
+
+- `verifier.WithZoneHandlers()`: the Verifier's own registry holds the
+  bundled zone handlers (`zone.RegisterHandlersInto`) next to the DNSSEC
+  ones. Use it when the resolver returns records in presentation form
+  without their RDATA octets (e.g. an in-memory authority built from
+  zone text); `zone.DefaultRegistry()` stays untouched. Combining it
+  with `WithRegistry` returns `ErrConfig`.
+
+### Changed
+
+- The `no encoder for <name> <type>` error of a zone with its own
+  registry (every Verifier's) now names `zone.RegisterHandlersInto` /
+  `dnssec.RegisterHandlersInto` on that registry, and
+  `verifier.WithZoneHandlers`, instead of the global
+  `zone.RegisterHandlers`, which a Verifier does not see.
+
 ## [0.10.0] — 2026-10-06
 
 Verifier results say why a validation failed and which signatures were
@@ -14,7 +38,12 @@ checked, and verification can be streamed: `Result.ReasonCode` and
 `WithStepHandler` (SHOULD 14). Each Verifier owns its RR handler
 registry (MUST NOT 22). **Breaking:** `NewVerifier` no longer registers
 the DNSSEC handlers in the package-wide registry; code that relied on it
-must call `dnssec.RegisterHandlers()` itself. Includes the 0.9.1
+must call `dnssec.RegisterHandlers()` itself. **Breaking:** a Verifier
+no longer sees the zone handlers registered with
+`zone.RegisterHandlers()`; a resolver that returns TLSA, SVCB, … in
+presentation form without their RDATA octets now fails with
+`no encoder for <name> <type>`, and needs the zone handlers in the
+Verifier's registry (see Changed). Includes the 0.9.1
 security fixes. Coordinated release with dnsdata-js v0.10.0.
 
 ### Security
@@ -116,6 +145,25 @@ security fixes. Coordinated release with dnsdata-js v0.10.0.
   `ResourceRecord.Handler()` (default registry) is no longer the one a
   Verifier sees, so mutating it does not affect validation; pass
   `WithRegistry(zone.DefaultRegistry())` to share it.
+- **Breaking:** for the same reason, the zone handlers registered with
+  `zone.RegisterHandlers()` (TLSA, SMIMEA, SVCB, HTTPS, …) no longer
+  reach a Verifier. Answers the bundled resolver clients receive carry
+  their RDATA octets and validate as before; a resolver that returns
+  such records in presentation form without octets (e.g. an in-memory
+  authority built from zone text) fails with `verifier error: dnssec
+  error: no encoder for <name> SVCB (…)`. Give the Verifier a registry
+  with both handler sets:
+
+  ```go
+  reg := zone.NewRegistry()
+  dnssec.RegisterHandlersInto(reg)
+  zone.RegisterHandlersInto(reg)
+  v, err := verifier.NewVerifier(verifier.WithResolver(r), verifier.WithRegistry(reg))
+  ```
+
+  or, from 0.10.1, `verifier.WithZoneHandlers()`. Handlers of your own
+  registered with `zone.RegisterRRHandler` need `reg.Register` the same
+  way (this note was added in 0.10.1).
 - The handler cache on `zone.ResourceRecord` is now safe for concurrent
   use; a `ResourceRecord` must not be copied by value.
 - A Bogus result's `Chain` now ends with a step for the zone where

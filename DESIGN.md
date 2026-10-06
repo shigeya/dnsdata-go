@@ -305,6 +305,7 @@ release; [`CHANGELOG.md`](CHANGELOG.md) has the detail and
 | v0.9.0 | `cmd/dnsview` diagnostic command: one JSON line per query with the `Result` as is; MUST NOT 20 / 24 scoped to the library packages | UP-020 |
 | v0.9.1 | Security: a DNSKEY rrset verifies only under the exact KSK matched by the parent DS or a trust anchor (`AddTrustedKey`; `AddSEP` deprecated); a DNSKEY is taken only from its own DNSKEY answer | — |
 | v0.10.0 | `Result.ReasonCode` / `Result.Err()`; `ZoneStep.Signatures` (per-RRSIG results); `WithStepHandler`; a handler `zone.Registry` per Verifier (`WithRegistry`), `NewVerifier` no longer registers globally; `ZoneStep.DSDigests` filled; MUST 4a – 4d added to the contract | — |
+| v0.10.1 | `WithZoneHandlers` (the zone handlers in a Verifier's own registry, for answers without RDATA octets); the 0.10.0 migration note for zone handlers completed | — |
 
 The DoH client (UP-007) shipped in v0.1.0 and its dnsdata-js port
 landed with the dnsdata-js refactor.
