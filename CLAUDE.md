@@ -5,19 +5,24 @@ Operating notes for working in this repository with Claude Code.
 ## Lineage
 
 ```
-wide-cpp-lib (C++) → dnsdata-js (TypeScript) → dnsdata-go (Go)   ← here
+wide-cpp-lib (C++) → dnsdata-js (TypeScript)
+                          ⇅
+                     dnsdata-go (Go)   ← here
 ```
 
-- TypeScript source of truth: [`shigeya/dnsdata-js`](https://github.com/shigeya/dnsdata-js) — `packages/core/src/lib/`
+- Sibling implementation: [`shigeya/dnsdata-js`](https://github.com/shigeya/dnsdata-js)
+  (`packages/core/src/`). The Go code began as a port of it; the two are now
+  developed side by side as equals, neither upstream of the other.
 - Primary consumer: [`shigeya/mailsec-probe`](https://github.com/shigeya/mailsec-probe) (co-designed in both directions)
 
 ## Design rules
 
-- **Pure port.** No dependency on `miekg/dns`. Crypto comes from `crypto/...`
+- **Pure Go.** No dependency on `miekg/dns`. Crypto comes from `crypto/...`
   in the Go standard library only.
 - The public API must satisfy the MUST / SHOULD / MAY / MUST NOT clauses listed
-  in `mailsec-probe/DESIGN.md §16`. Those clauses are mirrored in `DESIGN.md §4`
-  of this repo as the source of truth for the contract.
+  in `mailsec-probe/DESIGN.md §16`, which is the source of truth for the
+  contract. `DESIGN.md §4` of this repo mirrors it (and dnsdata-js
+  `DESIGN.md §4` carries the TypeScript translation); change all three together.
 - Public API shape:
   - `verifier.Validate(ctx, qname, qtype) → (*Result, error)` — chain validation
   - `resolver.{DoH, Authoritative}` — DoH and direct-to-authoritative DNS
