@@ -71,6 +71,18 @@ this project adheres to [Semantic Versioning](https://semver.org/).
   (`unsupported-algorithm`), `SigNoMatchingKey` (`no-matching-key`),
   `SigInvalid` (`invalid`), the classification of
   `dnssec.Zone.CheckRRSIG`.
+- `verifier.WithStepHandler(func(verifier.StepEvent))`: streams the
+  steps of every Validate call (DESIGN.md SHOULD 14), synchronously on
+  the calling goroutine and never after Validate returns; nil (the
+  default) costs nothing. `StepEvent{Kind, Zone, Sig *SigCheck,
+  Detail}`; kinds `query`, `cache-hit` (Zone = queried name, Detail =
+  type), `ds`, `dnskey` (Detail = `verified` or the reason code),
+  `zone` (a chain step added, root first), `sig` (one per `SigCheck`
+  added to the chain, Sig = a copy), `alias` (Detail = `<type> <from>
+  -> <target>`), `insecure`, `bogus` (Zone = InsecureAt / BogusAt,
+  Detail = `<code>: <reason>`), `answer` (last event of a call that
+  returns no error; Detail = the verdict string). Exported as
+  `verifier.Step*` constants.
 
 ### Changed
 

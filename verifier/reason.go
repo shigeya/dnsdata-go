@@ -151,6 +151,7 @@ func (v *Verifier) checkRRSet(z *dnssec.Zone, name string, rrtype uint16, mode d
 	if !ok {
 		c.code = sigFailureCode(results)
 	}
+	v.emitRRSetCheck(name, rrtype, c, err)
 	if err != nil {
 		if c.code == CodeUnsupportedAlgorithm {
 			result.ReasonCode = c.code

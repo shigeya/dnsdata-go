@@ -20,6 +20,7 @@ type Verifier struct {
 	now      func() time.Time
 	cache    Cache
 	registry *zone.Registry
+	onStep   func(StepEvent)
 }
 
 // Option configures a [Verifier] at construction time.

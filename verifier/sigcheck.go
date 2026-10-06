@@ -49,6 +49,7 @@ func (v *Verifier) addStep(result *Result, step ZoneStep) {
 	checks := step.Signatures
 	step.Signatures = nil
 	result.Chain = append(result.Chain, step)
+	v.emit(StepZone, step.Zone, "")
 	v.addSigs(result, len(result.Chain)-1, checks)
 }
 
@@ -58,7 +59,8 @@ func (v *Verifier) addZoneSigs(result *Result, zoneName string, checks []SigChec
 	v.addStep(result, ZoneStep{Zone: zoneName, Signatures: checks})
 }
 
-// addSigs appends to result.Chain[i] each check it does not hold yet.
+// addSigs appends to result.Chain[i] each check it does not hold yet,
+// reporting each one as a [StepSig] event.
 func (v *Verifier) addSigs(result *Result, i int, checks []SigCheck) {
 	step := &result.Chain[i]
 	for _, c := range checks {
@@ -66,6 +68,7 @@ func (v *Verifier) addSigs(result *Result, i int, checks []SigCheck) {
 			continue
 		}
 		step.Signatures = append(step.Signatures, c)
+		v.emitSig(step.Zone, c)
 	}
 }
 

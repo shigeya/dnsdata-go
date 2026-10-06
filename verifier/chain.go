@@ -56,6 +56,7 @@ func (v *Verifier) Validate(ctx context.Context, qname string, qtype uint16) (*R
 		}
 		if seen[currentQname] {
 			setBogus(result, currentQname, "alias loop detected", CodeAliasLoop)
+			v.emitVerdict(result, currentQname)
 			return result, nil
 		}
 		seen[currentQname] = true
@@ -75,46 +76,53 @@ func (v *Verifier) Validate(ctx context.Context, qname string, qtype uint16) (*R
 		if outcome.Alias != nil {
 			outcome.Alias.Verdict = outcome.Verdict
 			result.Aliases = append(result.Aliases, *outcome.Alias)
+			v.emitAlias(outcome.Alias)
 			currentQname = outcome.Alias.Target
 			continue
 		}
 
-		result.Verdict = combined
-		// Carry forward the terminal hop's diagnostic strings so the
-		// caller learns *why* the worst hop failed (if any) or which
-		// negative proof produced a Secure-negative verdict. The
-		// terminal hop's values overwrite anything set earlier so the
-		// reported location matches the verdict.
-		if outcome.BogusAt != "" {
-			result.BogusAt = outcome.BogusAt
-		}
-		if outcome.BogusReason != "" {
-			result.BogusReason = outcome.BogusReason
-		}
-		if outcome.InsecureAt != "" {
-			result.InsecureAt = outcome.InsecureAt
-		}
-		if outcome.InsecureReason != "" {
-			result.InsecureReason = outcome.InsecureReason
-		}
-		if outcome.ReasonCode != "" {
-			result.ReasonCode = outcome.ReasonCode
-		}
-		if outcome.NegativeReason != "" {
-			result.NegativeReason = outcome.NegativeReason
-		}
-		if outcome.Wildcard != nil {
-			result.Wildcard = outcome.Wildcard
-		}
-		if result.Verdict == VerdictSecure {
-			result.Answer = outcome.Answer
-		}
+		applyOutcome(result, outcome, combined)
+		v.emitVerdict(result, currentQname)
 		return result, nil
 	}
 
 	// Alias chain longer than MaxAliasHops without resolving.
 	setBogus(result, currentQname, fmt.Sprintf("alias chain exceeded %d hops", MaxAliasHops), CodeAliasLimit)
+	v.emitVerdict(result, currentQname)
 	return result, nil
+}
+
+// applyOutcome sets the combined verdict on result and carries forward
+// the terminal hop's diagnostic strings, so the caller learns *why* the
+// worst hop failed (if any) or which negative proof produced a
+// Secure-negative verdict. The terminal hop's values overwrite anything
+// set earlier so the reported location matches the verdict.
+func applyOutcome(result *Result, outcome *hopOutcome, combined Verdict) {
+	result.Verdict = combined
+	if outcome.BogusAt != "" {
+		result.BogusAt = outcome.BogusAt
+	}
+	if outcome.BogusReason != "" {
+		result.BogusReason = outcome.BogusReason
+	}
+	if outcome.InsecureAt != "" {
+		result.InsecureAt = outcome.InsecureAt
+	}
+	if outcome.InsecureReason != "" {
+		result.InsecureReason = outcome.InsecureReason
+	}
+	if outcome.ReasonCode != "" {
+		result.ReasonCode = outcome.ReasonCode
+	}
+	if outcome.NegativeReason != "" {
+		result.NegativeReason = outcome.NegativeReason
+	}
+	if outcome.Wildcard != nil {
+		result.Wildcard = outcome.Wildcard
+	}
+	if result.Verdict == VerdictSecure {
+		result.Answer = outcome.Answer
+	}
 }
 
 // setBogus records a Bogus verdict decided outside a hop outcome.
@@ -480,9 +488,11 @@ func (v *Verifier) validateRoot(ctx context.Context, result *Result) (*dnssec.Zo
 func (v *Verifier) loadRecords(ctx context.Context, z *dnssec.Zone, name string, qtype uint16, result *Result) (int, error) {
 	if v.cache != nil {
 		if cached, ok := v.cache.Get(name, qtype); ok {
+			v.emitLookup(StepCacheHit, name, qtype)
 			return v.applyRecords(cached, z, name, qtype, result), nil
 		}
 	}
+	v.emitLookup(StepQuery, name, qtype)
 	resp, err := v.resolver.Query(ctx, name, qtype)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
