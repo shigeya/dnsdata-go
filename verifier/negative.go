@@ -123,7 +123,7 @@ func nsecHandlers(z *dnssec.Zone, _ string) []nsecCandidate {
 		if rr.Type != types.TypeNSEC {
 			continue
 		}
-		h, ok := rr.Handler().(*dnssec.NSEC)
+		h, ok := z.Handler(rr).(*dnssec.NSEC)
 		if !ok {
 			continue
 		}
@@ -149,7 +149,7 @@ func nsec3Handlers(z *dnssec.Zone) []nsec3Candidate {
 		if rr.Type != types.TypeNSEC3 {
 			continue
 		}
-		h, ok := rr.Handler().(*dnssec.NSEC3)
+		h, ok := z.Handler(rr).(*dnssec.NSEC3)
 		if !ok {
 			continue
 		}

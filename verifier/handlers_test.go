@@ -52,9 +52,9 @@ var zoneHandlerTypes = map[uint16]bool{
 }
 
 // TestNewVerifier_ValidatesZoneHandlerTypesOverTheWire validates TLSA,
-// SMIMEA, SVCB and HTTPS answers received by the auth client, with only
-// what NewVerifier registers: the octets the client received are signed
-// as they are.
+// SMIMEA, SVCB and HTTPS answers received by the auth client, with the
+// Verifier's default registry (DNSSEC handlers only): the octets the
+// client received are signed as they are.
 func TestNewVerifier_ValidatesZoneHandlerTypesOverTheWire(t *testing.T) {
 	if *updateHandlers {
 		writeHandlersZone(t)
@@ -205,10 +205,17 @@ func serveUDP(t *testing.T, authority *memory.Authority) string {
 	return conn.LocalAddr().String()
 }
 
+// serverRegistry encodes the DNSSEC records the test server sends; it
+// holds no zone handler.
+var serverRegistry = func() *zone.Registry {
+	reg := zone.NewRegistry()
+	dnssec.RegisterHandlersInto(reg)
+	return reg
+}()
+
 // answerQuery builds the wire response of authority to query. Records
-// are encoded with WireBody, so the generic-form records go out as
-// their octets; the DNSSEC records use the handlers NewVerifier
-// registered.
+// are encoded with WireBodyWith, so the generic-form records go out as
+// their octets; the DNSSEC records use serverRegistry.
 func answerQuery(authority *memory.Authority, query []byte) ([]byte, error) {
 	msg, err := wire.ParseMessage(query)
 	if err != nil {
@@ -238,7 +245,7 @@ func answerQuery(authority *memory.Authority, query []byte) ([]byte, error) {
 			return nil, err
 		}
 		b.AppendUint32(rr.TTL)
-		if err := rr.WireBody(&b); err != nil {
+		if err := rr.WireBodyWith(serverRegistry, &b); err != nil {
 			return nil, err
 		}
 	}

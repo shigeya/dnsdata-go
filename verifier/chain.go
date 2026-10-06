@@ -523,7 +523,7 @@ func matchKSKWithAnchors(rootZone *dnssec.Zone, anchors *dnssec.RootAnchors) (*d
 	}
 	rrset := rootZone.FindRRSet(".", types.TypeDNSKEY)
 	for _, rr := range rrset {
-		k, ok := rr.Handler().(*dnssec.DNSKey)
+		k, ok := rootZone.Handler(rr).(*dnssec.DNSKey)
 		if !ok || !k.IsSecureEntryPoint() {
 			continue
 		}
@@ -562,7 +562,7 @@ func matchKSKWithDS(childZone, parentZone *dnssec.Zone, childName string) (*dnss
 		return nil, fmt.Errorf("%w at %s", ErrNoDS, childName)
 	}
 	for _, rr := range dnskeys {
-		k, ok := rr.Handler().(*dnssec.DNSKey)
+		k, ok := childZone.Handler(rr).(*dnssec.DNSKey)
 		if !ok || !k.IsSecureEntryPoint() {
 			continue
 		}
@@ -571,7 +571,7 @@ func matchKSKWithDS(childZone, parentZone *dnssec.Zone, childName string) (*dnss
 			continue
 		}
 		for _, dsRR := range dsSet {
-			ds, ok := dsRR.Handler().(*dnssec.DS)
+			ds, ok := parentZone.Handler(dsRR).(*dnssec.DS)
 			if !ok {
 				continue
 			}
@@ -591,7 +591,7 @@ func matchKSKWithDS(childZone, parentZone *dnssec.Zone, childName string) (*dnss
 func summarizeZone(zoneName string, z *dnssec.Zone, ksk *dnssec.DNSKey) ZoneStep {
 	step := ZoneStep{Zone: zoneName}
 	for _, rr := range z.FindRRSet(zoneName, types.TypeDNSKEY) {
-		k, ok := rr.Handler().(*dnssec.DNSKey)
+		k, ok := z.Handler(rr).(*dnssec.DNSKey)
 		if !ok {
 			continue
 		}
@@ -602,7 +602,7 @@ func summarizeZone(zoneName string, z *dnssec.Zone, ksk *dnssec.DNSKey) ZoneStep
 		})
 	}
 	for _, rr := range z.FindRRSet(zoneName, types.TypeDS) {
-		ds, ok := rr.Handler().(*dnssec.DS)
+		ds, ok := z.Handler(rr).(*dnssec.DS)
 		if !ok {
 			continue
 		}
@@ -657,10 +657,11 @@ func normalizeQName(s string) string {
 
 // newZone returns an empty zone whose RRSIG checks use the verifier's
 // clock (RFC 4035 §5.3.1: a signature outside its validity window does
-// not verify).
+// not verify) and whose handlers come from the verifier's registry.
 func (v *Verifier) newZone() *dnssec.Zone {
 	z := dnssec.NewZone()
 	z.SetClock(v.now)
+	z.SetRegistry(v.registry)
 	return z
 }
 
@@ -676,4 +677,3 @@ func qtypeMnemonic(t uint16) string {
 func joinChainErr(err error) error {
 	return errors.Join(ErrChainTimeout, err)
 }
-

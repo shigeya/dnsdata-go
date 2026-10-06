@@ -15,7 +15,7 @@ func buildAnswer(z *dnssec.Zone, qname string, qtype uint16) (*Answer, error) {
 	a := &Answer{Name: qname, Type: qtype, Records: make([]AnswerRecord, 0, len(rrset))}
 	for _, rr := range rrset {
 		var b wire.Builder
-		if err := rr.WireBody(&b); err != nil {
+		if err := rr.WireBodyWith(z.Registry(), &b); err != nil {
 			return nil, fmt.Errorf("%w: answer %s: %v", ErrVerifier, rr.Label, err)
 		}
 		a.Records = append(a.Records, AnswerRecord{

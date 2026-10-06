@@ -263,16 +263,13 @@ func TestValidate_BogusLeafSignature(t *testing.T) {
 	if len(resolver.responses[key]) < 2 {
 		t.Fatal("expected at least one A record + one RRSIG in fixture")
 	}
-	// Flip a byte in the cached RRSIG handler's Signature so the next
-	// signature check fails. Touching rr.Value would only update the
-	// textual form; the resolver returns records whose handler is
-	// already constructed.
+	// Flip a byte of the RRSIG's signature so the next signature check
+	// fails.
 	for _, rr := range resolver.responses[key] {
 		if rr.Type != types.TypeRRSIG {
 			continue
 		}
-		sig := rr.Handler().(*dnssec.RRSig)
-		sig.Signature[0] ^= 0x01
+		tamperRRSIG(t, rr)
 		break
 	}
 
@@ -441,6 +438,21 @@ func TestVerdict_JSONRoundTrip(t *testing.T) {
 }
 
 // --- Tiny utilities (kept local so the package doesn't ship them) ---
+
+// tamperRRSIG flips the first octet of rr's signature, in both the
+// presentation value (which a Verifier's own registry parses) and the
+// handler cached through the default registry.
+func tamperRRSIG(t *testing.T, rr *zone.ResourceRecord) {
+	t.Helper()
+	sig, ok := rr.Handler().(*dnssec.RRSig)
+	if !ok {
+		t.Fatalf("%s is not an RRSIG", rr)
+	}
+	sig.Signature[0] ^= 0x01
+	fields := strings.Fields(rr.Value)
+	fields[len(fields)-1] = base64.StdEncoding.EncodeToString(sig.Signature)
+	rr.Value = strings.Join(fields, " ")
+}
 
 func encodeECDSAP256Coords(t *testing.T, pub *ecdsa.PublicKey) []byte {
 	t.Helper()

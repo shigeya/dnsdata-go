@@ -6,6 +6,44 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `zone.Registry`: a goroutine-safe map from RR type to handler
+  factory. `zone.NewRegistry()`, `(*Registry).Register(rrtype,
+  factory)` (a nil factory removes the entry) and `Lookup(rrtype)`.
+  The package registry is now `zone.DefaultRegistry()`;
+  `zone.RegisterRRHandler`, `zone.RegisterHandlers`,
+  `dnssec.RegisterHandlers`, `ResourceRecord.Handler` and
+  `ResourceRecord.WireBody` use it as before.
+- `ResourceRecord.HandlerFrom(reg)` and `ResourceRecord.WireBodyWith(reg, b)`:
+  the handler, and the wire body, through a given registry (nil means
+  the default one). The handler cached on a record is tied to the
+  registry that built it and is never returned for another registry.
+- `zone.RegisterHandlersInto(reg)` and `dnssec.RegisterHandlersInto(reg)`:
+  the same handler sets as `RegisterHandlers`, installed into a
+  caller-owned registry.
+- `dnssec.Zone.SetRegistry(reg)`, `Registry()` and `Handler(rr)`: a zone
+  resolves its DNSKEY / RRSIG / DS / NSEC / NSEC3 handlers, and the
+  RDATA of its digest targets, through its registry (default: the
+  package one).
+- `verifier.WithRegistry(reg)`: the registry a Verifier resolves
+  handlers through.
+
+### Changed
+
+- `verifier.NewVerifier` no longer calls `dnssec.RegisterHandlers()`
+  and leaves `zone.DefaultRegistry()` untouched (DESIGN.md MUST NOT 22).
+  Each Verifier owns a registry: by default a fresh one with the DNSSEC
+  handlers only (the set it used to register, so verdicts are
+  unchanged), or the one given with `WithRegistry`. Code that relied on
+  constructing a Verifier to register the DNSSEC handlers globally must
+  call `dnssec.RegisterHandlers()` itself. A handler obtained with
+  `ResourceRecord.Handler()` (default registry) is no longer the one a
+  Verifier sees, so mutating it does not affect validation; pass
+  `WithRegistry(zone.DefaultRegistry())` to share it.
+- The handler cache on `zone.ResourceRecord` is now safe for concurrent
+  use; a `ResourceRecord` must not be copied by value.
+
 ## [0.9.0] — 2026-10-05
 
 A diagnostic command, `dnsview`, that shows query by query what the

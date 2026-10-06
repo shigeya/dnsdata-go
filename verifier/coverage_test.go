@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shigeya/dnsdata-go/dnssec"
 	"github.com/shigeya/dnsdata-go/resolver"
 	"github.com/shigeya/dnsdata-go/types"
 	"github.com/shigeya/dnsdata-go/verifier"
@@ -88,8 +87,8 @@ func TestValidate_EmptyQName(t *testing.T) {
 }
 
 // TestValidate_BogusDSSignature exercises the descendInto "DS rrset
-// failed signature verification" branch. We tamper with the cached
-// RRSIG handler of the DS rrset at com., which is signed by root.
+// failed signature verification" branch. We tamper with the RRSIG of
+// the DS rrset at com., which is signed by root.
 func TestValidate_BogusDSSignature(t *testing.T) {
 	resolver, anchors := buildChain(t)
 	key := lookupKey{"com.", types.TypeDS}
@@ -97,8 +96,7 @@ func TestValidate_BogusDSSignature(t *testing.T) {
 		if rr.Type != types.TypeRRSIG {
 			continue
 		}
-		sig := rr.Handler().(*dnssec.RRSig)
-		sig.Signature[0] ^= 0x01
+		tamperRRSIG(t, rr)
 		break
 	}
 

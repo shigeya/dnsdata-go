@@ -169,7 +169,7 @@ func TestValidate_CNAME_BogusSignature(t *testing.T) {
 		if !ok || h.TypeCovered != types.TypeCNAME {
 			continue
 		}
-		h.Signature[0] ^= 0x01
+		tamperRRSIG(t, rr)
 		break
 	}
 
