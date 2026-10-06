@@ -6,6 +6,40 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Security
+
+- **A key injected into a zone's DNSKEY rrset could make attacker-signed
+  data validate Secure** (root included). Affects every release from
+  v0.1.0 up to and including v0.9.0. In `KeyModeKSK`, an RRSIG over a
+  DNSKEY rrset by a SEP-flagged key that passed the KSK check was
+  reported verified without checking its signature; the KSK check
+  accepted any key whose owner name was marked with `AddSEP` (which the
+  verifier did for every zone after its DS / trust-anchor match); a key
+  without the SEP flag skipped the KSK check altogether; and only the
+  first DNSKEY with the RRSIG's key tag was tried. Now, in `KeyModeKSK`
+  an RRSIG verifies only when its signature verifies under a DNSKEY
+  (with the RRSIG's signer, key tag and algorithm) that is itself
+  authenticated: equal (owner, flags, protocol, algorithm, public key)
+  to a key added with `dnssec.Zone.AddTrustedKey`, or matched by a DS
+  record at its owner name in the parent zone. `KeyModeZSK` accepts any
+  key of a DNSKEY rrset that verifies that way, `KeyModeCSK` either,
+  and other mode values none. The SEP flag is no longer consulted
+  anywhere in validation (RFC 4034 §2.1.1): the verifier trusts exactly
+  the keys that match the parent's validated DS rrset, or the trust
+  anchors, whatever their flags, so a zone whose DS-matched KSK lacks
+  the SEP flag (Bogus before) now validates. Every DNSKEY sharing the
+  RRSIG's key tag and algorithm is tried. In `ZoneStep.Signatures` an
+  RRSIG by an unauthenticated key in KSK mode reports
+  `no-matching-key`, a bad signature by an authenticated one `invalid`.
+- `dnssec.Zone.AddSEP` is deprecated and no longer authenticates any
+  key (`IsSecureEntryPoint` still reports the mark). Code that used it
+  to trust a zone's keys must call `AddTrustedKey` with the key itself.
+  A zone with no parent no longer matches DS records held at its own
+  apex: without a parent only `AddTrustedKey` authenticates a KSK.
+- Added `dnssec.Zone.AddTrustedKey`, `IsTrustedKey` and
+  `FindDNSKeys(signer, keyTag, algorithm)` (every candidate key;
+  `FindDNSKey` still returns the first by tag).
+
 ### Added
 
 - `zone.Registry`: a goroutine-safe map from RR type to handler

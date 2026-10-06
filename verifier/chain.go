@@ -380,15 +380,16 @@ func (v *Verifier) descendInto(ctx context.Context, parentZone *dnssec.Zone, par
 		return d, err
 	}
 
-	// Manually match the child's KSK against one of the parent's DS
-	// records before invoking KSK-mode verification.
-	childKSK, err := matchKSKWithDS(d.zone, parentZone, childName)
+	// Match the child's keys against the parent's (validated) DS
+	// records, and trust exactly those keys as KSKs: the DNSKEY rrset
+	// must verify under one of them.
+	ksks, err := matchKSKWithDS(d.zone, parentZone, childName)
 	if err != nil {
 		result.BogusReason = err.Error()
 		result.ReasonCode = keyMatchCode(err)
 		return d, nil
 	}
-	d.zone.AddSEP(childName)
+	trustKeys(d.zone, ksks)
 
 	dnskeyCheck, err := v.checkRRSet(d.zone, childName, types.TypeDNSKEY, dnssec.KeyModeKSK, result)
 	if err != nil {
@@ -400,8 +401,33 @@ func (v *Verifier) descendInto(ctx context.Context, parentZone *dnssec.Zone, par
 		result.ReasonCode = dnskeyCheck.code
 		return d, nil
 	}
-	d.status, d.ksk = descendDescended, childKSK
+	d.status, d.ksk = descendDescended, signingKSK(ksks, dnskeyCheck.sigs)
 	return d, nil
+}
+
+// trustKeys authenticates each of keys as a KSK of z.
+func trustKeys(z *dnssec.Zone, keys []*dnssec.DNSKey) {
+	for _, k := range keys {
+		z.AddTrustedKey(k)
+	}
+}
+
+// signingKSK returns the authenticated KSK that signed a zone's DNSKEY
+// rrset: the first of ksks named by a verified RRSIG in sigs (the
+// DNSKEY rrset's checks), or the first of ksks when none is (which a
+// verified rrset rules out).
+func signingKSK(ksks []*dnssec.DNSKey, sigs []SigCheck) *dnssec.DNSKey {
+	for _, s := range sigs {
+		if s.Result != SigVerified {
+			continue
+		}
+		for _, k := range ksks {
+			if k.KeyTag == s.KeyTag && k.Algorithm == s.Algorithm {
+				return k
+			}
+		}
+	}
+	return ksks[0]
 }
 
 // noDSDescent classifies a childName for which parentZone returned no
@@ -456,14 +482,14 @@ func (v *Verifier) validateRoot(ctx context.Context, result *Result) (*dnssec.Zo
 	if _, err := v.loadRecords(ctx, rootZone, ".", types.TypeDNSKEY, result); err != nil {
 		return nil, err
 	}
-	rootKSK, err := matchKSKWithAnchors(rootZone, v.anchors)
+	rootKSKs, err := matchKSKWithAnchors(rootZone, v.anchors)
 	if err != nil {
 		// Bogus is a classified verdict, not a Validate error.
 		v.addStep(result, summarizeZone(".", rootZone, nil, nil, nil))
 		setBogus(result, ".", err.Error(), CodeTrustAnchorMismatch)
 		return nil, nil
 	}
-	rootZone.AddSEP(".")
+	trustKeys(rootZone, rootKSKs)
 	check, err := v.checkRRSet(rootZone, ".", types.TypeDNSKEY, dnssec.KeyModeKSK, result)
 	if err != nil {
 		return nil, err
@@ -473,7 +499,7 @@ func (v *Verifier) validateRoot(ctx context.Context, result *Result) (*dnssec.Zo
 		setBogus(result, ".", "root DNSKEY rrset signature did not verify", check.code)
 		return nil, nil
 	}
-	v.addStep(result, summarizeZone(".", rootZone, nil, rootKSK, check.sigs))
+	v.addStep(result, summarizeZone(".", rootZone, nil, signingKSK(rootKSKs, check.sigs), check.sigs))
 	return rootZone, nil
 }
 
@@ -543,76 +569,74 @@ func (v *Verifier) applyRecords(records []*zone.ResourceRecord, z *dnssec.Zone, 
 	return count
 }
 
-// matchKSKWithAnchors returns the first SEP-flagged DNSKEY in the root
-// zone whose DS digest matches one of the configured trust anchors.
-func matchKSKWithAnchors(rootZone *dnssec.Zone, anchors *dnssec.RootAnchors) (*dnssec.DNSKey, error) {
+// matchKSKWithAnchors returns every DNSKEY in the root zone whose DS
+// digest matches one of the configured trust anchors. The SEP flag is
+// not consulted (RFC 4034 §2.1.1: it is a hint only).
+func matchKSKWithAnchors(rootZone *dnssec.Zone, anchors *dnssec.RootAnchors) ([]*dnssec.DNSKey, error) {
 	if anchors == nil || len(anchors.DS) == 0 {
 		return nil, errors.New("no trust anchors configured")
 	}
-	rrset := rootZone.FindRRSet(".", types.TypeDNSKEY)
-	for _, rr := range rrset {
-		k, ok := rootZone.Handler(rr).(*dnssec.DNSKey)
-		if !ok || !k.IsSecureEntryPoint() {
-			continue
-		}
-		digestData, err := k.DSDigestData()
+	var dsSet []*dnssec.DS
+	for _, anchor := range anchors.DS {
+		digest, err := hex.DecodeString(anchor.Digest)
 		if err != nil {
 			continue
 		}
-		for _, anchor := range anchors.DS {
-			if anchor.KeyTag != k.KeyTag || anchor.Algorithm != k.Algorithm {
-				continue
-			}
-			digest, err := hex.DecodeString(anchor.Digest)
-			if err != nil {
-				continue
-			}
-			ds := dnssec.NewDS(nil, anchor.KeyTag, anchor.Algorithm, anchor.DigestType, digest)
-			matched, err := ds.VerifyDigest(digestData)
-			if err == nil && matched {
-				return k, nil
-			}
-		}
+		dsSet = append(dsSet, dnssec.NewDS(nil, anchor.KeyTag, anchor.Algorithm, anchor.DigestType, digest))
+	}
+	if ksks := keysMatchingDS(rootZone, ".", dsSet); len(ksks) > 0 {
+		return ksks, nil
 	}
 	return nil, fmt.Errorf("%w", ErrTrustAnchorMismatch)
 }
 
-// matchKSKWithDS returns the first SEP-flagged DNSKEY in childZone
-// whose DS digest matches one of the DS records present at parentZone
-// under childName.
-func matchKSKWithDS(childZone, parentZone *dnssec.Zone, childName string) (*dnssec.DNSKey, error) {
-	dnskeys := childZone.FindRRSet(childName, types.TypeDNSKEY)
-	dsSet := parentZone.FindRRSet(childName, types.TypeDS)
-	if len(dnskeys) == 0 {
+// matchKSKWithDS returns every DNSKEY in childZone whose DS digest
+// matches one of the DS records present at parentZone under childName.
+// The SEP flag is not consulted.
+func matchKSKWithDS(childZone, parentZone *dnssec.Zone, childName string) ([]*dnssec.DNSKey, error) {
+	if len(childZone.FindRRSet(childName, types.TypeDNSKEY)) == 0 {
 		return nil, fmt.Errorf("%w at %s", ErrNoDNSKEY, childName)
 	}
-	if len(dsSet) == 0 {
+	dsRRs := parentZone.FindRRSet(childName, types.TypeDS)
+	if len(dsRRs) == 0 {
 		return nil, fmt.Errorf("%w at %s", ErrNoDS, childName)
 	}
-	for _, rr := range dnskeys {
-		k, ok := childZone.Handler(rr).(*dnssec.DNSKey)
-		if !ok || !k.IsSecureEntryPoint() {
+	var dsSet []*dnssec.DS
+	for _, rr := range dsRRs {
+		if ds, ok := parentZone.Handler(rr).(*dnssec.DS); ok {
+			dsSet = append(dsSet, ds)
+		}
+	}
+	if ksks := keysMatchingDS(childZone, childName, dsSet); len(ksks) > 0 {
+		return ksks, nil
+	}
+	return nil, fmt.Errorf("no DNSKEY at %s matched a DS in parent", childName)
+}
+
+// keysMatchingDS returns the DNSKEYs at name in z whose key tag,
+// algorithm and digest match one of dsSet.
+func keysMatchingDS(z *dnssec.Zone, name string, dsSet []*dnssec.DS) []*dnssec.DNSKey {
+	var out []*dnssec.DNSKey
+	for _, rr := range z.FindRRSet(name, types.TypeDNSKEY) {
+		k, ok := z.Handler(rr).(*dnssec.DNSKey)
+		if !ok {
 			continue
 		}
 		digestData, err := k.DSDigestData()
 		if err != nil {
 			continue
 		}
-		for _, dsRR := range dsSet {
-			ds, ok := parentZone.Handler(dsRR).(*dnssec.DS)
-			if !ok {
-				continue
-			}
+		for _, ds := range dsSet {
 			if ds.KeyTag != k.KeyTag || ds.Algorithm != k.Algorithm {
 				continue
 			}
-			matched, err := ds.VerifyDigest(digestData)
-			if err == nil && matched {
-				return k, nil
+			if matched, err := ds.VerifyDigest(digestData); err == nil && matched {
+				out = append(out, k)
+				break
 			}
 		}
 	}
-	return nil, fmt.Errorf("no DNSKEY at %s matched a DS in parent", childName)
+	return out
 }
 
 // summarizeZone collects a [ZoneStep] for the result chain. The DNSKEYs

@@ -35,6 +35,13 @@ type signedZone struct {
 // installed at name. The DNSKEY rrset is self-signed.
 func newSignedZone(t *testing.T, name string, inception, expire int64) *signedZone {
 	t.Helper()
+	return newSignedZoneWithFlags(t, name, 257, inception, expire)
+}
+
+// newSignedZoneWithFlags is newSignedZone with the CSK's DNSKEY flags
+// chosen by the caller (257 = zone key + SEP, 256 = zone key only).
+func newSignedZoneWithFlags(t *testing.T, name string, flags uint16, inception, expire int64) *signedZone {
+	t.Helper()
 	dnssec.RegisterHandlers()
 
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -42,7 +49,7 @@ func newSignedZone(t *testing.T, name string, inception, expire int64) *signedZo
 		t.Fatalf("GenerateKey for %s: %v", name, err)
 	}
 	keyData := encodeECDSAP256Coords(t, &priv.PublicKey)
-	value := "257 3 13 " + base64.StdEncoding.EncodeToString(keyData)
+	value := decUint(flags) + " 3 13 " + base64.StdEncoding.EncodeToString(keyData)
 
 	z := dnssec.NewZone()
 	dnskeyRR, err := z.AddRRFromParts(name, 3600, "IN", "DNSKEY", value)

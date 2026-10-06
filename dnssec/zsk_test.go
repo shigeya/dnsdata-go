@@ -29,7 +29,7 @@ func genECDSAKey(t *testing.T, flags uint16) (*ecdsa.PrivateKey, string) {
 // TestVerify_ZSKMode_ChainsThroughKSK exercises the KeyModeZSK path:
 // the A rrset is signed by a non-SEP ZSK; verifyZSK is invoked, which
 // recursively validates the DNSKEY rrset (signed by an in-zone KSK)
-// against the configured SEP.
+// under the trusted KSK.
 func TestVerify_ZSKMode_ChainsThroughKSK(t *testing.T) {
 	apex := "zsk.example."
 
@@ -78,8 +78,8 @@ func TestVerify_ZSKMode_ChainsThroughKSK(t *testing.T) {
 	}
 	z.AddRR(aRRSig)
 
-	// Trust the KSK via SEP set.
-	z.AddSEP(apex)
+	// Trust the KSK.
+	z.AddTrustedKey(ksk)
 
 	ok, err := z.VerifyRRSet("www."+apex, types.TypeA, dnssec.KeyModeZSK, "")
 	if err != nil {
