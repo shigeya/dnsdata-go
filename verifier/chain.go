@@ -549,9 +549,17 @@ func (v *Verifier) loadRecords(ctx context.Context, z *dnssec.Zone, name string,
 // or DNAME themselves and put the target's rrset (same type, different
 // owner) into the same answer. Counting those would make the caller
 // look for a qname rrset that is not there.
+//
+// A DNSKEY is taken only from the answer to the DNSKEY query for its
+// own owner name, the rrset the descent authenticates. One carried in
+// any other answer is dropped: once in z it would sign data checked in
+// KeyModeNone without having been authenticated.
 func (v *Verifier) applyRecords(records []*zone.ResourceRecord, z *dnssec.Zone, name string, qtype uint16, result *Result) int {
 	count := 0
 	for _, rr := range records {
+		if rr.Type == types.TypeDNSKEY && (qtype != types.TypeDNSKEY || !dnssec.EqualCanonicalNames(rr.Label, name)) {
+			continue
+		}
 		z.AddRR(rr)
 		switch rr.Type {
 		case types.TypeDNSKEY:

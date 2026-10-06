@@ -31,6 +31,12 @@ this project adheres to [Semantic Versioning](https://semver.org/).
   RRSIG's key tag and algorithm is tried. In `ZoneStep.Signatures` an
   RRSIG by an unauthenticated key in KSK mode reports
   `no-matching-key`, a bad signature by an authenticated one `invalid`.
+- **A DNSKEY carried in the answer to any other query became a signing
+  key of the zone** after its DNSKEY rrset had been authenticated, so
+  data signed by it (checked in `KeyModeNone`) validated Secure.
+  Affects v0.1.0 through v0.9.0. The verifier now takes a DNSKEY only
+  from the answer to the DNSKEY query for its owner name, and drops
+  (from the zone and from `Evidence.DNSKEYs`) any other.
 - `dnssec.Zone.AddSEP` is deprecated and no longer authenticates any
   key (`IsSecureEntryPoint` still reports the mark). Code that used it
   to trust a zone's keys must call `AddTrustedKey` with the key itself.
