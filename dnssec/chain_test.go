@@ -67,12 +67,11 @@ func buildSignedZone(t *testing.T, apex, aLabel string, ip string) signedZone {
 	return signedZone{z: z, key: key}
 }
 
-// TestChain_SEPAccepted exercises verifyDelegationSigner's short-circuit
-// path: if the DNSKEY's owner is in the SEP set, KSK validation
-// succeeds without any DS lookup.
-func TestChain_SEPAccepted(t *testing.T) {
+// TestChain_TrustedKeyAccepted: a key authenticated with AddTrustedKey
+// (a trust anchor) passes as a KSK without any DS lookup.
+func TestChain_TrustedKeyAccepted(t *testing.T) {
 	sz := buildSignedZone(t, "example.", "www.example.", "192.0.2.10")
-	sz.z.AddSEP("example.")
+	sz.z.AddTrustedKey(sz.key)
 
 	ok, err := sz.z.VerifyRRSet("www.example.", types.TypeA, dnssec.KeyModeNone, "")
 	if err != nil {
@@ -82,14 +81,53 @@ func TestChain_SEPAccepted(t *testing.T) {
 		t.Errorf("VerifyRRSet returned false for SEP-trusted chain")
 	}
 
-	// KSK mode on the DNSKEY rrset must also succeed because the apex
-	// is configured as a SEP.
+	// KSK mode on the DNSKEY rrset must also succeed because its
+	// signing key is trusted.
 	ok, err = sz.z.VerifyRRSet("example.", types.TypeDNSKEY, dnssec.KeyModeKSK, "")
 	if err != nil {
 		t.Fatalf("VerifyRRSet(DNSKEY, KSK): %v", err)
 	}
 	if !ok {
-		t.Errorf("KSK-mode DNSKEY verification failed with SEP configured")
+		t.Errorf("KSK-mode DNSKEY verification failed with the key trusted")
+	}
+}
+
+// TestChain_SEPMarkDoesNotAuthenticate: the zone-level AddSEP mark no
+// longer makes the keys at a name pass as KSKs (up to v0.9.0 it did, so
+// any key injected into the DNSKEY rrset was trusted).
+func TestChain_SEPMarkDoesNotAuthenticate(t *testing.T) {
+	sz := buildSignedZone(t, "example.", "www.example.", "192.0.2.10")
+	sz.z.AddSEP("example.")
+	ok, err := sz.z.VerifyRRSet("example.", types.TypeDNSKEY, dnssec.KeyModeKSK, "")
+	if err != nil {
+		t.Fatalf("VerifyRRSet(DNSKEY, KSK): %v", err)
+	}
+	if ok {
+		t.Error("KSK-mode DNSKEY verification passed on the AddSEP mark alone")
+	}
+	if !sz.z.IsSecureEntryPoint("example.") {
+		t.Error("IsSecureEntryPoint no longer reports the AddSEP mark")
+	}
+}
+
+// TestChain_TrustedKeyIsTheKeyItself: AddTrustedKey trusts that exact
+// key, not its owner name or key tag.
+func TestChain_TrustedKeyIsTheKeyItself(t *testing.T) {
+	sz := buildSignedZone(t, "example.", "www.example.", "192.0.2.10")
+	other := buildSignedZone(t, "example.", "www.example.", "192.0.2.10")
+	sz.z.AddTrustedKey(other.key)
+	if sz.z.IsTrustedKey(sz.key) {
+		t.Fatal("IsTrustedKey true for a key that was not added")
+	}
+	if !sz.z.IsTrustedKey(other.key) {
+		t.Fatal("IsTrustedKey false for the added key")
+	}
+	ok, err := sz.z.VerifyRRSet("example.", types.TypeDNSKEY, dnssec.KeyModeKSK, "")
+	if err != nil {
+		t.Fatalf("VerifyRRSet(DNSKEY, KSK): %v", err)
+	}
+	if ok {
+		t.Error("KSK-mode DNSKEY verification passed under an untrusted key")
 	}
 }
 
@@ -112,10 +150,8 @@ func TestChain_ParentDS(t *testing.T) {
 		hex.EncodeToString(sum[:]),
 	)
 
-	// Parent zone holds the DS rrset (and we mark parent as a SEP so
-	// the DS lookup terminates).
+	// Parent zone holds the DS rrset.
 	parent := dnssec.NewZone()
-	parent.AddSEP("example.")
 	if _, err := parent.AddRRFromParts("child.example.", 3600, "IN", "DS", dsValue); err != nil {
 		t.Fatalf("AddRR(DS): %v", err)
 	}
@@ -140,7 +176,7 @@ func TestChain_VerifyRRSet_KSKMode_ANotInDNSKEYShortCircuit(t *testing.T) {
 	// KSK-mode verification of an A rrset must NOT short-circuit on
 	// the DNSKEY-only branch; the signature itself must be checked.
 	sz := buildSignedZone(t, "ksk.example.", "www.ksk.example.", "192.0.2.30")
-	sz.z.AddSEP("ksk.example.")
+	sz.z.AddTrustedKey(sz.key)
 
 	ok, err := sz.z.VerifyRRSet("www.ksk.example.", types.TypeA, dnssec.KeyModeKSK, "")
 	if err != nil {

@@ -3,6 +3,7 @@ package dnssec
 import (
 	"bytes"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"slices"
 	"time"
@@ -20,15 +21,18 @@ const (
 	// KeyModeNone verifies the signature only.
 	KeyModeNone KeyVerifyMode = 0
 	// KeyModeZSK additionally requires the signing key to be a valid
-	// ZSK (signed by an in-zone KSK whose DS chain reaches a trust anchor).
+	// ZSK: a member of the DNSKEY rrset at the signer name, which must
+	// itself verify in KeyModeKSK.
 	KeyModeZSK KeyVerifyMode = 0x01
-	// KeyModeKSK additionally requires the signing key to be a valid
-	// KSK (matched against a DS record in the parent zone or against a
-	// trust anchor). Signatures on DNSKEY rrsets made by a ZSK are
-	// short-circuited as valid.
+	// KeyModeKSK additionally requires the signing key to be an
+	// authenticated KSK: one added with [Zone.AddTrustedKey], or whose
+	// DS digest matches a DS record at its owner name in the parent zone
+	// ([Zone.SetParent]). The signature is always checked as well. The
+	// SEP flag of the key is not consulted (RFC 4034 §2.1.1: it is a
+	// hint only).
 	KeyModeKSK KeyVerifyMode = 0x02
-	// KeyModeCSK treats the signing key as a Combined Signing Key
-	// (KSK + ZSK in one). Equivalent to KeyModeKSK for SEP-flagged keys.
+	// KeyModeCSK accepts a signing key that is valid in either
+	// KeyModeKSK or KeyModeZSK (a Combined Signing Key is both).
 	KeyModeCSK KeyVerifyMode = 0x04
 )
 
@@ -42,9 +46,10 @@ const (
 // gives a ready-to-use, empty zone.
 type Zone struct {
 	*zone.Zone
-	parent *Zone
-	seps   []string
-	now    func() time.Time
+	parent  *Zone
+	seps    []string
+	trusted []*DNSKey
+	now     func() time.Time
 }
 
 // SetClock makes [Zone.VerifyRRSIG] reject an RRSIG whose validity
@@ -88,20 +93,50 @@ func wireHeaderForOwner(owner string, rrtype, class uint16) ([]byte, error) {
 // configured chain (e.g. the root or an unattached trust anchor).
 func (z *Zone) Parent() *Zone { return z.parent }
 
-// SetParent attaches a parent zone. The parent is consulted when DS
-// records or KSK validations are needed for child-zone lookups.
+// SetParent attaches a parent zone. In [KeyModeKSK] a key is
+// authenticated by a DS record at its owner name in the parent; the
+// caller is responsible for having validated that DS rrset.
 func (z *Zone) SetParent(p *Zone) { z.parent = p }
 
-// AddSEP marks name as a Secure Entry Point (trust anchor). When the
-// chain walker reaches a DNSKEY at name and the SEP set contains it,
-// validation succeeds without consulting a parent DS RRset.
+// AddSEP records name as a Secure Entry Point, reported back by
+// [Zone.IsSecureEntryPoint].
+//
+// Deprecated: the mark no longer authenticates anything. Up to v0.9.0
+// it made every DNSKEY owned by name pass as a KSK, so a key injected
+// into the DNSKEY rrset was trusted too. Authenticate the specific key
+// with [Zone.AddTrustedKey] instead.
 func (z *Zone) AddSEP(name string) {
 	z.seps = append(z.seps, name)
 }
 
-// IsSecureEntryPoint reports whether name is registered as an SEP.
+// IsSecureEntryPoint reports whether name was recorded with
+// [Zone.AddSEP]. It has no bearing on validation.
 func (z *Zone) IsSecureEntryPoint(name string) bool {
 	return slices.Contains(z.seps, name)
+}
+
+// AddTrustedKey authenticates key as a key-signing key of the zone at
+// its owner name, as a trust anchor or a DS match established by the
+// caller does. In [KeyModeKSK] an RRSIG then verifies when its
+// signature verifies under a DNSKEY equal to key: same owner name
+// (compared canonically), flags, protocol, algorithm and public key.
+// A copy of key is kept; later changes to key do not affect it.
+func (z *Zone) AddTrustedKey(key *DNSKey) {
+	z.trusted = append(z.trusted, key.Clone().(*DNSKey))
+}
+
+// IsTrustedKey reports whether key equals a key added with
+// [Zone.AddTrustedKey].
+func (z *Zone) IsTrustedKey(key *DNSKey) bool {
+	return slices.ContainsFunc(z.trusted, func(t *DNSKey) bool { return sameKey(t, key) })
+}
+
+// sameKey reports whether a and b are the same DNSKEY: same owner name
+// and RDATA.
+func sameKey(a, b *DNSKey) bool {
+	return EqualCanonicalNames(a.Label(), b.Label()) &&
+		a.Flags == b.Flags && a.Protocol == b.Protocol && a.Algorithm == b.Algorithm &&
+		bytes.Equal(a.KeyData, b.KeyData)
 }
 
 // FindRRSIGs returns all RRSIG handlers in this zone that cover the
@@ -126,8 +161,23 @@ func (z *Zone) FindRRSIGs(name string, typeCovered uint16, signer string) []*RRS
 	return out
 }
 
+// FindDNSKeys returns every DNSKEY at signerName with the given key tag
+// and algorithm, in zone order. Key tags are not unique (RFC 4035
+// §5.3.1), so a signature must be tried against each of them.
+func (z *Zone) FindDNSKeys(signerName string, keyTag uint16, algorithm uint8) []*DNSKey {
+	var out []*DNSKey
+	for _, rr := range z.FindRRSet(signerName, types.TypeDNSKEY) {
+		h, ok := rr.Handler().(*DNSKey)
+		if ok && h.KeyTag == keyTag && h.Algorithm == algorithm {
+			out = append(out, h)
+		}
+	}
+	return out
+}
+
 // FindDNSKey returns the first DNSKEY at signerName whose KeyTag
-// matches. Pass keyTag = 0 to accept any tag.
+// matches. Pass keyTag = 0 to accept any tag. Several keys can share a
+// tag; [Zone.FindDNSKeys] returns all of them.
 func (z *Zone) FindDNSKey(signerName string, keyTag uint16) *DNSKey {
 	candidates := z.FindRRSet(signerName, types.TypeDNSKEY)
 	for _, rr := range candidates {
@@ -221,44 +271,22 @@ func registrationFor(rrtype uint16) string {
 // (true, nil) on success; (false, nil) when verification fails for a
 // non-erroneous reason (missing key, signature mismatch); (false, err)
 // when the verification could not be attempted at all.
+//
+// The checks run in this order: validity window (only with a clock,
+// [Zone.SetClock]); key lookup by signer, key tag and algorithm
+// ([Zone.FindDNSKeys]); key mode, which keeps the candidate keys that
+// mode accepts (false when none is left); signature. The signature is
+// always checked, in every mode, and verifies when it verifies under
+// any one of the remaining keys; otherwise the result is that of the
+// first key.
 func (z *Zone) VerifyRRSIG(name string, typeCovered uint16, rrsig *RRSig, mode KeyVerifyMode) (bool, error) {
 	if !z.withinValidity(rrsig) {
 		return false, nil
 	}
-	dnskey := z.FindDNSKey(rrsig.Signer, rrsig.KeyTag)
-	if dnskey == nil {
-		return false, nil
+	keys, err := z.keysForMode(z.FindDNSKeys(rrsig.Signer, rrsig.KeyTag, rrsig.Algorithm), mode)
+	if len(keys) == 0 {
+		return false, err
 	}
-
-	switch mode {
-	case KeyModeZSK:
-		if !dnskey.IsSecureEntryPoint() {
-			ok, err := z.verifyZSK(dnskey)
-			if err != nil || !ok {
-				return ok, err
-			}
-		}
-	case KeyModeKSK:
-		if dnskey.IsSecureEntryPoint() {
-			ok, err := z.verifyKSK(dnskey)
-			if err != nil || !ok {
-				return ok, err
-			}
-			if typeCovered == types.TypeDNSKEY {
-				// RFC 4035 §5.3.2: signature on DNSKEY rrset by a ZSK
-				// is ignored when explicitly asked for KSK-mode trust.
-				return true, nil
-			}
-		}
-	case KeyModeCSK:
-		if dnskey.IsSecureEntryPoint() {
-			ok, err := z.verifyKSK(dnskey)
-			if err != nil || !ok {
-				return ok, err
-			}
-		}
-	}
-
 	digestTarget, err := z.CreateDigestTarget(rrsig, name, typeCovered)
 	if err != nil {
 		return false, err
@@ -266,7 +294,77 @@ func (z *Zone) VerifyRRSIG(name string, typeCovered uint16, rrsig *RRSig, mode K
 	if digestTarget == nil {
 		return false, nil
 	}
-	return dnskey.Verify(digestTarget, rrsig.Signature)
+	return verifyWithAny(keys, digestTarget, rrsig.Signature)
+}
+
+// keysForMode keeps the candidate keys (all with the RRSIG's signer,
+// key tag and algorithm) that mode accepts as signers, with the first
+// error met while deciding. No key's SEP flag is consulted.
+//
+//   - KeyModeNone: every key.
+//   - KeyModeKSK: the authenticated KSKs ([Zone.AddTrustedKey], or a
+//     DS match in the parent).
+//   - KeyModeZSK: every key, when the DNSKEY rrset at the signer (which
+//     holds them all) verifies in KeyModeKSK; otherwise none.
+//   - KeyModeCSK: as KeyModeZSK, or else the authenticated KSKs.
+//   - any other value: none.
+func (z *Zone) keysForMode(keys []*DNSKey, mode KeyVerifyMode) ([]*DNSKey, error) {
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	switch mode {
+	case KeyModeNone:
+		return keys, nil
+	case KeyModeKSK:
+		return z.filterKeys(keys, z.verifyKSK)
+	case KeyModeZSK:
+		if ok, err := z.verifyZSK(keys[0]); !ok {
+			return nil, err
+		}
+		return keys, nil
+	case KeyModeCSK:
+		ok, zskErr := z.verifyZSK(keys[0])
+		if ok {
+			return keys, nil
+		}
+		ksks, err := z.filterKeys(keys, z.verifyKSK)
+		return ksks, errors.Join(zskErr, err)
+	}
+	return nil, nil
+}
+
+// filterKeys keeps the keys accept reports true for, with the first
+// error accept returned.
+func (z *Zone) filterKeys(keys []*DNSKey, accept func(*DNSKey) (bool, error)) ([]*DNSKey, error) {
+	var out []*DNSKey
+	var firstErr error
+	for _, k := range keys {
+		ok, err := accept(k)
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+		if ok {
+			out = append(out, k)
+		}
+	}
+	return out, firstErr
+}
+
+// verifyWithAny checks signature over data under each key in turn:
+// true as soon as one verifies, otherwise the result of the first key.
+func verifyWithAny(keys []*DNSKey, data, signature []byte) (bool, error) {
+	var firstOK bool
+	var firstErr error
+	for i, k := range keys {
+		ok, err := k.Verify(data, signature)
+		if ok && err == nil {
+			return true, nil
+		}
+		if i == 0 {
+			firstOK, firstErr = ok, err
+		}
+	}
+	return firstOK, firstErr
 }
 
 // VerifyRRSet applies RFC 4035 §5.3.3 "any-valid" semantics: the RRset
@@ -290,16 +388,19 @@ func (z *Zone) VerifyRRSet(name string, typeCovered uint16, mode KeyVerifyMode, 
 	return false, firstErr
 }
 
-// verifyKSK asserts that dnskey is a valid Key-Signing Key — i.e. that
-// its DS digest matches a DS record in the parent zone (or it is a
-// configured trust anchor).
+// verifyKSK reports whether dnskey is an authenticated Key-Signing
+// Key: added with [Zone.AddTrustedKey], or matching a DS record in the
+// parent zone. The SEP flag is not consulted.
 func (z *Zone) verifyKSK(dnskey *DNSKey) (bool, error) {
+	if z.IsTrustedKey(dnskey) {
+		return true, nil
+	}
 	return z.verifyDelegationSigner(dnskey)
 }
 
-// verifyZSK asserts that dnskey is a valid Zone-Signing Key — i.e.
-// that the DNSKEY rrset containing it is itself signed by a KSK in the
-// same zone.
+// verifyZSK reports whether dnskey is a valid Zone-Signing Key: the
+// DNSKEY rrset at its owner name, of which it is a member, verifies
+// under an authenticated KSK.
 func (z *Zone) verifyZSK(dnskey *DNSKey) (bool, error) {
 	return z.VerifyRRSet(dnskey.Label(), types.TypeDNSKEY, KeyModeKSK, "")
 }
@@ -313,18 +414,14 @@ func (z *Zone) VerifyDSRRSet(childName string) (bool, error) {
 	return z.parent.VerifyRRSet(childName, types.TypeDS, KeyModeNone, "")
 }
 
-// verifyDelegationSigner reports whether dnskey is authenticated either
-// as a configured SEP or by matching a DS record in the parent zone.
+// verifyDelegationSigner reports whether dnskey matches a DS record at
+// its owner name in the parent zone. A zone without a parent has no DS
+// to match: a DS at a zone's own apex is never consulted.
 func (z *Zone) verifyDelegationSigner(dnskey *DNSKey) (bool, error) {
-	if z.IsSecureEntryPoint(dnskey.Label()) {
-		return true, nil
+	if z.parent == nil {
+		return false, nil
 	}
-
-	src := z
-	if z.parent != nil {
-		src = z.parent
-	}
-	dsSet := src.FindRRSet(dnskey.Label(), types.TypeDS)
+	dsSet := z.parent.FindRRSet(dnskey.Label(), types.TypeDS)
 	if len(dsSet) == 0 {
 		return false, nil
 	}
