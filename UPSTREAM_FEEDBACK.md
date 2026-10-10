@@ -45,7 +45,7 @@ DESIGN.md change.
 | [UF-005](#uf-005) | RRSIG digest target sorts RRset members with their RDLENGTH prefix and keeps duplicates; RFC 4034 §6.3 orders by RDATA alone and removes duplicates | `dnssec/dnssec_zone.ts:98-105` | bug | fixed-upstream (dnsdata-js `4dffc7a`) |
 | [UF-006](#uf-006) | RRSIG inception / expiration never checked; an expired signature validates | `dnssec/dnssec_zone.ts`, `verifier/` | bug | fixed-upstream (dnsdata-js `4dffc7a`) |
 | [UF-007](#uf-007) | DNAME answers and alias answers from recursive resolvers are Bogus; wildcard NODATA and empty non-terminals are not proven as NODATA | `verifier/chain.ts:272,363`, `verifier/leaf_negative.ts` | bug | fixed-upstream (dnsdata-js `110e51e`) |
-| [UF-008](#uf-008) | NSEC next names and SVCB / HTTPS targets are lowercased on the wire, though neither type is on the RFC 4034 §6.2 list (RFC 6840 §5.1); signatures made by other signers over mixed-case names fail | `dnssec/nsec.ts:169`, `zone/rr/svcb_rr.ts:220`, `wire/rdata_svcb.ts:81` | bug | pending |
+| [UF-008](#uf-008) | NSEC next names and SVCB / HTTPS targets are lowercased on the wire, though neither type is on the RFC 4034 §6.2 list (RFC 6840 §5.1); signatures made by other signers over mixed-case names fail | `dnssec/nsec.ts:169`, `zone/rr/svcb_rr.ts:220`, `wire/rdata_svcb.ts:81` | bug | fixed-upstream (dnsdata-js `ec3bb61`) |
 
 UF status legend:
 
@@ -320,7 +320,7 @@ The types on the list (NS, CNAME, SOA, PTR, MX, RP, NAPTR, SRV, DNAME, RRSIG, �
 
 **Recommended TS fix.** Add `domain_name2wire_preserve_case` next to `domain_name2wire`, use it in `NSEC.get_wire_body`, `SVCB.get_wire_body` and the SVCB target check, and port the tests and vectors.
 
-**Tracking:** pending.
+**Tracking:** fixed-upstream in dnsdata-js `ec3bb61` (`domain_name2wire_preserve_case`; tests `tests/zone/name_case.spec.ts`, `tests/dnssec/bind_case.spec.ts`, the shared vectors).
 
 ---
 
