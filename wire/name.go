@@ -23,6 +23,21 @@ var (
 // Returns [ErrLabelTooLong] if any label exceeds 63 octets and
 // [ErrNameTooLong] if the encoded form would exceed 255 octets.
 func DomainNameToWire(name string) ([]byte, error) {
+	return domainNameToWire(name, asciiToLower)
+}
+
+// DomainNameToWirePreserveCase is [DomainNameToWire] without the
+// lowercasing: every byte of every label is copied verbatim. It encodes
+// names in the RDATA of types that are not on the RFC 4034 §6.2 list of
+// types whose canonical form lowercases embedded names — NSEC (removed
+// from the list by RFC 6840 §5.1) and every type defined later, such as
+// SVCB / HTTPS. UPSTREAM_FEEDBACK.md UF-008.
+func DomainNameToWirePreserveCase(name string) ([]byte, error) {
+	return domainNameToWire(name, func(b byte) byte { return b })
+}
+
+// domainNameToWire is the shared encoder; fold maps each label byte.
+func domainNameToWire(name string, fold func(byte) byte) ([]byte, error) {
 	out := make([]byte, 0, len(name)+1)
 	l := len(name)
 	for i := 0; i < l; {
@@ -36,7 +51,7 @@ func DomainNameToWire(name string) ([]byte, error) {
 			}
 			out = append(out, byte(labelLen))
 			for k := i; k < j; k++ {
-				out = append(out, asciiToLower(name[k]))
+				out = append(out, fold(name[k]))
 			}
 		}
 		if j < l { // consumed a dot

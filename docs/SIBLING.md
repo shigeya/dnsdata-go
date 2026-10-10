@@ -84,7 +84,7 @@ mechanical. TS paths are relative to `dnsdata-js/packages/core/src/`:
 | `resolver/memory/`                       | `resolver/memory/`         | In-memory authority for signed zones (UP-014); NSEC3 proofs (`nsec3.ts` ↔ `nsec3.go`, UP-018) |
 | `verifier/`                              | `verifier/`                | Chain-of-trust walker with pluggable `Resolver` (UP-001, UP-005, UP-006), `Cache` (UP-008), `Result.answer` (UP-015) |
 | `dns_exception.ts`                       | per-package `errors.go`    | TS exception hierarchy ↔ Go sentinel errors |
-| `../tests/testdata/`                     | `testdata/`                | Shared vectors (`rdata_roundtrip.json`, `signed/`); byte-identical, generated on the Go side |
+| `../tests/testdata/`                     | `testdata/`                | Shared vectors (`rdata_roundtrip.json`, `signed/`, `bind/`); byte-identical, generated on the Go side (`bind/` by BIND) |
 
 ## Drift policy
 

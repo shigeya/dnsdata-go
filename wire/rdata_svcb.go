@@ -90,13 +90,13 @@ func svcbPresentation(rdata []byte) (string, bool) {
 }
 
 // svcbTargetIsPlain reports whether the parser turns target back into
-// raw: it lowercases, does not follow compression, and splits on
-// whitespace.
+// raw: it does not follow compression and splits on whitespace. It keeps
+// the case of the target (UPSTREAM_FEEDBACK.md UF-008).
 func svcbTargetIsPlain(target string, raw []byte) bool {
 	if strings.ContainsAny(target, " \t\r\n") {
 		return false
 	}
-	encoded, err := DomainNameToWire(target)
+	encoded, err := DomainNameToWirePreserveCase(target)
 	return err == nil && bytes.Equal(encoded, raw)
 }
 

@@ -45,6 +45,7 @@ DESIGN.md change.
 | [UF-005](#uf-005) | RRSIG digest target sorts RRset members with their RDLENGTH prefix and keeps duplicates; RFC 4034 §6.3 orders by RDATA alone and removes duplicates | `dnssec/dnssec_zone.ts:98-105` | bug | fixed-upstream (dnsdata-js `4dffc7a`) |
 | [UF-006](#uf-006) | RRSIG inception / expiration never checked; an expired signature validates | `dnssec/dnssec_zone.ts`, `verifier/` | bug | fixed-upstream (dnsdata-js `4dffc7a`) |
 | [UF-007](#uf-007) | DNAME answers and alias answers from recursive resolvers are Bogus; wildcard NODATA and empty non-terminals are not proven as NODATA | `verifier/chain.ts:272,363`, `verifier/leaf_negative.ts` | bug | fixed-upstream (dnsdata-js `110e51e`) |
+| [UF-008](#uf-008) | NSEC next names and SVCB / HTTPS targets are lowercased on the wire, though neither type is on the RFC 4034 §6.2 list (RFC 6840 §5.1); signatures made by other signers over mixed-case names fail | `dnssec/nsec.ts:169`, `zone/rr/svcb_rr.ts:220`, `wire/rdata_svcb.ts:81` | bug | pending |
 
 UF status legend:
 
@@ -298,6 +299,28 @@ The same section requires duplicate RRs to be removed. Without that, an RRset th
 **Recommended TS fix.** Mirror the Go change in `chain.ts` (swap `try_cname` / `try_dname`, compare the owner in the count) and `leaf_negative.ts`, and port the tests.
 
 **Tracking:** fixed-upstream in dnsdata-js `110e51e` (`resolve_leaf`, `apply_records`, `leaf_negative.ts`; tests `tests/verifier/verifier_shapes.spec.ts` and two rows in `tests/resolver/memory/hierarchy.spec.ts`).
+
+---
+
+## UF-008
+
+### Case of names in NSEC and SVCB / HTTPS RDATA
+
+**TS source:** `packages/core/src/dnssec/nsec.ts:169` (`get_wire_body`), `packages/core/src/zone/rr/svcb_rr.ts:220` (`get_wire_body`), `packages/core/src/wire/rdata_svcb.ts:81` (the target check in `rdata_to_string`). Go had the same code until this fix.
+
+**Problem.** Every name written to the wire went through `domain_name2wire`, which lowercases. RFC 4034 §6.2 lowercases the names in RDATA only for the types on its list, and RFC 6840 §5.1 takes NSEC off that list and closes it to later types, so the canonical form of NSEC (next domain name) and of SVCB / HTTPS (target name, RFC 9460) keeps the case. A signer that follows this — BIND 9.20 `dnssec-signzone` does — signs `alias.example. NSEC Alpha.example. …` and `svc.example. SVCB 1 Target.Example.` with the upper-case octets, and both siblings computed the digest over lowercased ones:
+
+- NSEC with a mixed-case next name (a zone with a mixed-case owner name has one) failed through every resolver, since the received NSEC is re-encoded from its presentation form. Denial-of-existence proofs that need it were Bogus.
+- SVCB / HTTPS with a mixed-case target failed when read from zone text (`zone`, the in-memory authority). Through the resolvers it verified, because `rdata_to_string` falls back to the generic form for such a target and the received octets are kept.
+- Signatures made here were self-consistent but differed from what other validators compute, for the same names.
+
+The types on the list (NS, CNAME, SOA, PTR, MX, RP, NAPTR, SRV, DNAME, RRSIG, …) are lowercased as before; that is correct and does not change.
+
+**Go-side handling.** `wire.DomainNameToWirePreserveCase` copies labels verbatim; `dnssec.NSEC.WireBody` and `zone.SVCB.WireBody` use it, and `svcbTargetIsPlain` compares against it, so `RDataToString` prints a mixed-case SVCB / HTTPS target in presentation form. Tests: `zone/name_case_test.go::TestWireBody_NameCase` (presentation path, list types still lowercased), three new vectors in `testdata/rdata_roundtrip.json` (received path), `wire/name_test.go::TestDomainNameToWirePreserveCase`, the `uppercase target` row of `wire/rdata_svcb_test.go`, and `dnssec/bind_case_test.go::TestVerifyRRSIG_BINDMixedCase` over `testdata/bind/case.example.zone`, a zone signed by BIND with mixed-case names (four of its signatures failed before).
+
+**Recommended TS fix.** Add `domain_name2wire_preserve_case` next to `domain_name2wire`, use it in `NSEC.get_wire_body`, `SVCB.get_wire_body` and the SVCB target check, and port the tests and vectors.
+
+**Tracking:** pending.
 
 ---
 
@@ -1504,7 +1527,7 @@ func WithCheckingDisabled(cd bool) Option
 
 **Why it matters.** These types came out of `RDataToString` in the RFC 3597 generic form, which round-trips but is unreadable in logs and reports, and is not what other tools print.
 
-**Behaviour.** TLSA / SMIMEA: `usage selector matching-type hex` (RFC 6698 §2.2, RFC 8162 §2). SVCB / HTTPS: `priority target key=value ...` (RFC 9460 §2.1) with the registered mnemonics and `keyNNNNN`, the latter with a hex value — the form `zone.ParseSVCB` reads. RDATA that form would not reproduce octet for octet stays generic: keys out of order, an ALPN id with `,`, `"`, `\`, whitespace or non-ASCII, an IPv4-mapped `ipv6hint`, a target the parser would rewrite (upper case, compression), empty TLSA certificate data. Malformed RDATA also stays generic instead of failing, so one bad record does not fail a resolver response. The round-trip property (wire → presentation → `NewResourceRecord` → wire) holds for every shared vector; new vectors "SVCB all keys", "SVCB keys out of order", "TLSA empty data".
+**Behaviour.** TLSA / SMIMEA: `usage selector matching-type hex` (RFC 6698 §2.2, RFC 8162 §2). SVCB / HTTPS: `priority target key=value ...` (RFC 9460 §2.1) with the registered mnemonics and `keyNNNNN`, the latter with a hex value — the form `zone.ParseSVCB` reads. RDATA that form would not reproduce octet for octet stays generic: keys out of order, an ALPN id with `,`, `"`, `\`, whitespace or non-ASCII, an IPv4-mapped `ipv6hint`, a target the parser would rewrite (compression; upper case until UF-008), empty TLSA certificate data. Malformed RDATA also stays generic instead of failing, so one bad record does not fail a resolver response. The round-trip property (wire → presentation → `NewResourceRecord` → wire) holds for every shared vector; new vectors "SVCB all keys", "SVCB keys out of order", "TLSA empty data".
 
 **TS migration notes.** `rdata_to_string` gains the same cases (`wire/rdata_svcb.ts`); `zone/generic.ts::tlsa_presentation` is replaced by it. Assert the same bytes and strings as `wire/rdata_svcb_test.go`.
 

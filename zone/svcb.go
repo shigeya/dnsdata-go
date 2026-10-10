@@ -107,8 +107,11 @@ func ParseSVCB(rr *ResourceRecord, value string) (*SVCB, error) {
 }
 
 // WireBody emits `rdlen(2) + priority(2) + target-wire + svcparams`.
+// The target keeps its case: SVCB / HTTPS are not on the RFC 4034 §6.2
+// list, so their canonical form does not lowercase it (RFC 6840 §5.1;
+// UPSTREAM_FEEDBACK.md UF-008).
 func (s *SVCB) WireBody(b *wire.Builder) error {
-	target, err := wire.DomainNameToWire(s.Target)
+	target, err := wire.DomainNameToWirePreserveCase(s.Target)
 	if err != nil {
 		return fmt.Errorf("%w: SVCB target %q: %v", ErrRDataFormat, s.Target, err)
 	}

@@ -167,9 +167,12 @@ func (n *NSEC) ProvesNoDS() bool {
 	return hasNS && !hasDS && !hasSOA
 }
 
-// WireBody emits `rdlen(2) + next_domain_wire + type_bitmap`.
+// WireBody emits `rdlen(2) + next_domain_wire + type_bitmap`. The next
+// domain name keeps its case: RFC 6840 §5.1 takes NSEC off the RFC 4034
+// §6.2 list, so the canonical form does not lowercase it
+// (UPSTREAM_FEEDBACK.md UF-008).
 func (n *NSEC) WireBody(b *wire.Builder) error {
-	nextWire, err := wire.DomainNameToWire(n.NextDomain)
+	nextWire, err := wire.DomainNameToWirePreserveCase(n.NextDomain)
 	if err != nil {
 		return err
 	}

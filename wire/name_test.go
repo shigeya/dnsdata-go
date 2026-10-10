@@ -98,6 +98,37 @@ func TestDomainNameToWire_Canonical(t *testing.T) {
 	}
 }
 
+// TestDomainNameToWirePreserveCase: the same encoding and limits as
+// DomainNameToWire, with every label byte copied verbatim
+// (UPSTREAM_FEEDBACK.md UF-008).
+func TestDomainNameToWirePreserveCase(t *testing.T) {
+	got, err := wire.DomainNameToWirePreserveCase("Example123.NET.")
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	want := []byte{
+		0x0a, 'E', 'x', 'a', 'm', 'p', 'l', 'e', '1', '2', '3',
+		0x03, 'N', 'E', 'T',
+		0x00,
+	}
+	if !equalBytes(got, want) {
+		t.Errorf("encode = % x, want % x", got, want)
+	}
+	decoded, err := wire.WireToDomainName(got)
+	if err != nil || decoded != "Example123.NET." {
+		t.Errorf("round-trip = %q, %v", decoded, err)
+	}
+	for _, tc := range nameVector {
+		got, err := wire.DomainNameToWirePreserveCase(strings.ToLower(tc.name))
+		if err != nil || !equalBytes(got, tc.wire) {
+			t.Errorf("encode(%q) = % x, %v; want % x", strings.ToLower(tc.name), got, err, tc.wire)
+		}
+	}
+	if _, err := wire.DomainNameToWirePreserveCase(strings.Repeat("A", 64) + "."); !errors.Is(err, wire.ErrLabelTooLong) {
+		t.Errorf("long label: err = %v, want ErrLabelTooLong", err)
+	}
+}
+
 func TestDomainNameToWire_LabelTooLong(t *testing.T) {
 	long := strings.Repeat("a", 64) + ".example."
 	_, err := wire.DomainNameToWire(long)

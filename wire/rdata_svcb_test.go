@@ -77,7 +77,8 @@ func TestRDataToString_SVCB(t *testing.T) {
 		{"ipv4hint ragged", types.TypeSVCB, "00010000040005c000020101", `\# 12 00010000040005c000020101`},
 		{"ipv6hint IPv4-mapped", types.TypeSVCB, "0001000006001000000000000000000000ffffc0000201",
 			`\# 23 0001000006001000000000000000000000ffffc0000201`},
-		{"uppercase target", types.TypeSVCB, "000103464f4f00", `\# 7 000103464f4f00`},
+		// The parser keeps the target's case (UPSTREAM_FEEDBACK.md UF-008).
+		{"uppercase target", types.TypeSVCB, "000103464f4f00", "1 FOO."},
 		{"mandatory unsorted", types.TypeSVCB, "000100000000040003000100010003026832000300020035",
 			`\# 24 000100000000040003000100010003026832000300020035`},
 	})
