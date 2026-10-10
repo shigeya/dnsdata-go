@@ -19,6 +19,10 @@ this project adheres to [Semantic Versioning](https://semver.org/).
   NS, CNAME, MX, SRV, NAPTR, RP, SOA, RRSIG and the other list types
   are still lowercased. A test vector signed by BIND is in
   `testdata/bind/`. UPSTREAM_FEEDBACK.md UF-008.
+  **Re-sign** a zone signed by `dnssec/signer` up to 0.10.1 if it has an
+  owner name, an NSEC next name or an SVCB / HTTPS target with upper-case
+  letters: those signatures were made over the lowercased names and no
+  longer verify (they did not verify with other validators either).
 
 ### Added
 
