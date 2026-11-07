@@ -1685,6 +1685,8 @@ func MatchOPKEYSPKI(spkiDER []byte, keys []OPKEY, supported ...uint8) (bool, err
 
 **Tests.** `zone/opkey_test.go`, `types/opkey_test.go`: the draft §2.3 example and its §4.2 generic form round-trip; presentation in either hex case, split, and in parentheses through both zone readers; values outside the restrictions decode, are unusable, are rejected by `NewOPKEY`, and never match; matching with SHA-256 only, SHA-512 only, both (a key listed only by SHA-256 does not match when SHA-512 is selected), and a SHA-256-only caller; `OPKEYFromTLSA` over presentation, received and generic records; generic RDATA under a test-local `TYPE4242`; the `OPKEY` mnemonic fails in zone text while unallocated.
 
+**dnsview (added after v0.12.0).** `-opkey` adds `"opkey":{"records":[{"value","usable","reason"?}],"error"?}` to a line whose validated answer is TLSA (or OPKEY once allocated): each record's OPKEY presentation, whether it is usable, and `Check`'s reason without the error-category prefix. `-type` defaults to TLSA under `-opkey`; NAME is the full owner name (no `_op` composition). A record shorter than three octets fails the RRset: `error` set, `records` empty, exit status 1. Without `-opkey` the line is unchanged. Tests sign a hierarchy with a TLSA RRset in `cmd/dnsview/opkey_test.go` (the shared `testdata/signed/` has none).
+
 **TS migration notes.** Put `OPKEY` beside the TLSA handler and reuse its parser and encoder. `StringToRRType('OPKEY')` should throw a distinct error class while unallocated. SHA-256 / SHA-512 come from `node:crypto` (or WebCrypto `subtle.digest`, which makes matching async).
 
 **Tracking:** proposed.

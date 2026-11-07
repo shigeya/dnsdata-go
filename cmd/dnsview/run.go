@@ -37,6 +37,7 @@ type config struct {
 	server  string // normalised ip:port
 	anchors *dnssec.RootAnchors
 	cd      bool
+	opkey   bool // read TLSA / OPKEY answers as OPKEY RDATA
 	timeout time.Duration
 	queries []query
 }
@@ -53,6 +54,12 @@ type line struct {
 	Server string           `json:"server"`
 	Error  string           `json:"error,omitempty"`
 	Result *verifier.Result `json:"result"`
+	OPKEY  *opkeyView       `json:"opkey,omitempty"` // only under -opkey
+}
+
+// failed reports whether the line counts against the exit status.
+func (l line) failed() bool {
+	return l.Error != "" || (l.OPKEY != nil && l.OPKEY.Error != "")
 }
 
 // authResolver queries cfg.server directly: UDP, then TCP on truncation.
@@ -87,7 +94,7 @@ func run(args []string, e env) int {
 	status := exitOK
 	for _, q := range cfg.queries {
 		l := validate(v, cfg, q)
-		if l.Error != "" {
+		if l.failed() {
 			status = exitQueryError
 		}
 		if err := enc.Encode(l); err != nil {
@@ -106,6 +113,9 @@ func validate(v *verifier.Verifier, cfg config, q query) line {
 	if err != nil {
 		l.Error = err.Error()
 	}
+	if cfg.opkey {
+		l.OPKEY = readOPKEY(res)
+	}
 	return l
 }
 
@@ -114,16 +124,20 @@ func parseArgs(args []string, stderr io.Writer) (config, error) {
 	fs := flag.NewFlagSet("dnsview", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "usage: dnsview -server ADDR [-type A,AAAA] [-anchors FILE] [-cd] [-timeout 10s] NAME...")
+		fmt.Fprintln(stderr, "usage: dnsview -server ADDR [-type A,AAAA] [-anchors FILE] [-cd] [-opkey] [-timeout 10s] NAME...")
 		fs.PrintDefaults()
 	}
 	server := fs.String("server", "", "server to query, ip or ip:port (required)")
 	anchorsPath := fs.String("anchors", "", "root trust anchors JSON (default: built-in IANA root anchors)")
 	typeList := fs.String("type", "A", "comma-separated RR types; mnemonics or TYPE<n>, any case")
 	cd := fs.Bool("cd", false, "set the CD (checking disabled) bit on queries")
+	opkey := fs.Bool("opkey", false, "read TLSA (or OPKEY) answers as OPKEY RDATA (draft-shigeya-dns-opkey); -type defaults to TLSA")
 	timeout := fs.Duration("timeout", defaultTimeout, "time limit for each query's validation")
 	if err := fs.Parse(args); err != nil {
 		return config{}, err
+	}
+	if *opkey && !flagSet(fs, "type") {
+		*typeList = "TLSA"
 	}
 	fail := func(err error) (config, error) {
 		fmt.Fprintln(stderr, "dnsview:", err)
@@ -151,9 +165,17 @@ func parseArgs(args []string, stderr io.Writer) (config, error) {
 		server:  auth.NormalizeAddr(*server),
 		anchors: anchors,
 		cd:      *cd,
+		opkey:   *opkey,
 		timeout: *timeout,
 		queries: crossQueries(fs.Args(), qtypes),
 	}, nil
+}
+
+// flagSet reports whether the flag name was given on the command line.
+func flagSet(fs *flag.FlagSet, name string) bool {
+	set := false
+	fs.Visit(func(f *flag.Flag) { set = set || f.Name == name })
+	return set
 }
 
 func parseTypes(list string) ([]uint16, error) {

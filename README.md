@@ -118,6 +118,15 @@ replaces the built-in IANA root anchors, `-cd` sets the CD bit and
 `-timeout` (default 10s) bounds each query. The exit status is 1 when
 any query could not be validated to completion, 2 on a usage error.
 
+`-opkey` reads a validated TLSA answer (the transitional form of OPKEY,
+`draft-shigeya-dns-opkey-00`) as OPKEY RDATA and adds an `opkey` member
+listing each record, whether it is usable and, if not, why. `-type`
+then defaults to TLSA; give the full owner name:
+
+```sh
+dnsview -server 192.0.2.53 -opkey _issuer-key._op.example.com.
+```
+
 ## Documentation
 
 - [`DESIGN.md`](DESIGN.md) — API contract (mirrors mailsec-probe

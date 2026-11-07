@@ -6,6 +6,16 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `dnsview -opkey`: a line whose validated answer is a TLSA RRset (or an
+  OPKEY RRset, once that type value is allocated) also carries
+  `"opkey":{"records":[{"value","usable","reason"?}],"error"?}`, the
+  records read as OPKEY RDATA with the reason a record is unusable.
+  `-type` defaults to TLSA under `-opkey`; NAME is the full owner name.
+  A record that is not valid TLSA RDATA fails the RRset (`error`, exit
+  status 1). Without `-opkey` the output is unchanged. UP-021.
+
 ## [0.12.0] — 2026-11-07
 
 Adds the OPKEY resource record of `draft-shigeya-dns-opkey-00` on top
