@@ -48,6 +48,9 @@ const (
 // RRTypeToString returns the canonical mnemonic for an RR type code, or
 // wraps [ErrUnknownRRType] for any unassigned value.
 func RRTypeToString(t uint16) (string, error) {
+	if isOPKEYType(t) {
+		return OPKEYMnemonic, nil
+	}
 	switch t {
 	case TypeInvalid:
 		return "INVALID", nil
@@ -204,13 +207,19 @@ func StringToRRType(s string) (uint16, error) {
 		return TypeURI, nil
 	case "CAA":
 		return TypeCAA, nil
+	case OPKEYMnemonic:
+		return opkeyFromMnemonic()
 	}
 	return 0, fmt.Errorf("%w: %q", ErrUnknownRRType, s)
 }
 
 // QTypeValidForRequest reports whether t is acceptable in the qtype field
-// of a DNS request. Meta-types (OPT) and obsolete types return false.
+// of a DNS request. Meta-types (OPT) and obsolete types return false,
+// and so does OPKEY until its type value is allocated ([OPKEYType]).
 func QTypeValidForRequest(t uint16) bool {
+	if isOPKEYType(t) {
+		return true
+	}
 	switch t {
 	case TypeA, TypeNS, TypeCNAME, TypeSOA, TypePTR, TypeHINFO,
 		TypeMX, TypeTXT, TypeRP, TypeAAAA, TypeLOC,

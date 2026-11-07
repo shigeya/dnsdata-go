@@ -6,6 +6,30 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- OPKEY RDATA (`draft-shigeya-dns-opkey-00`) in `zone`, on top of the
+  TLSA codec: `OPKEY` with `Usable` / `Check` (the field restrictions of
+  draft §2.1, for readers), `RData`, `String`; `NewOPKEY` and
+  `NewOPKEYForSPKI` (strict, for writers); `ParseOPKEY` (presentation
+  or RFC 3597 generic form); `DecodeOPKEYRData` (octets under any type
+  number); `OPKEYFromTLSA` (the transitional form, a TLSA RRset);
+  `MatchOPKEYSPKI` (draft §6.2: the strongest supported matching type
+  among usable records). Decoding is permissive; values outside the
+  restrictions decode and are unusable. UPSTREAM_FEEDBACK.md UP-021.
+- `types.OPKEYType`, `types.OPKEYMnemonic`,
+  `types.ErrOPKEYTypeUnallocated`. The OPKEY type value is not
+  allocated: `OPKEYType` and `StringToRRType("OPKEY")` return
+  `ErrOPKEYTypeUnallocated` (the latter also wraps `ErrUnknownRRType`),
+  and nothing in the library queries or builds an OPKEY-typed RR.
+
+### Changed
+
+- `zone.NewResourceRecord` and `Zone.ReadStringStrict` wrap the type
+  lookup error with `%w`, so `errors.Is` finds `types.ErrUnknownRRType`
+  (and `types.ErrOPKEYTypeUnallocated`) besides `ErrPresentationFormat`.
+  TLSA behaviour is unchanged.
+
 ## [0.11.0] — 2026-10-10
 
 Names in the RDATA of NSEC, SVCB and HTTPS keep their case on the wire,

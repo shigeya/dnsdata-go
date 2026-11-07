@@ -77,6 +77,7 @@ UF status legend:
 | [UP-018](#up-018) | NSEC3 signing (RFC 5155 §7.1; RFC 9276 profile by default, salt / iterations / opt-out as options) and NSEC3 proofs from the in-memory authority (§7.2) | `dnssec/signer/nsec3.go`, `resolver/memory/nsec3.go` | landed-upstream (dnsdata-js `0e76011`) |
 | [UP-019](#up-019) | DNS-over-TLS client (RFC 7858, RFC 8310 strict authentication) sharing the stream framing with the auth client | `resolver/dot/`, `resolver/internal/{stream,message}` | landed-upstream (dnsdata-js `b338bc2`) |
 | [UP-020](#up-020) | `dnsview` diagnostic command: validate queries against one server and print each `Result` as a JSON line | `cmd/dnsview/` | landed-upstream (dnsdata-js `c0f3622`) |
+| [UP-021](#up-021) | OPKEY RDATA (`draft-shigeya-dns-opkey-00`) on the TLSA codec: usable-record predicate, strict constructor, TLSA RRset as OPKEY, SPKI matching; type value unallocated | `zone/opkey.go`, `types/opkey.go` | proposed |
 
 UP status legend:
 
@@ -1642,6 +1643,51 @@ dnsview -server ADDR [-type A,AAAA] [-anchors FILE] [-cd] [-timeout 10s] NAME...
 **TS migration notes.** `packages/core/src/cli/dnsview.ts`, exposed as `"bin": {"dnsview": "dist/cli/dnsview.js"}`. Call `registerAllHandlers()` before validating; upper-case the type before `StringToRRType`. Differences in the JSON between the two (empty chain / evidence, timestamp precision, key order) are not aligned now; the outputs are compared by meaning, and both must give the same verdicts on `testdata/signed/`. The TS flags are parsed as Go's `flag` package does (`-name value`, `-name=value`, `--name`; parsing stops at the first non-flag), and `-timeout` takes Go-style durations. Where the TS `validate()` throws, the line carries `"result": null`; the Go side can return a partial Result alongside the error.
 
 **Tracking:** landed-upstream in dnsdata-js `c0f3622`.
+
+---
+
+## UP-021
+
+### OPKEY RDATA on the TLSA codec
+
+**Go source:** `zone/opkey.go`, `types/opkey.go`.
+
+**Why it matters.** `draft-shigeya-dns-opkey-00` defines OPKEY, an RR whose RDATA is TLSA RDATA restricted to usage 3 (DANE-EE), selector 1 (SPKI) and matching type 1 or 2 with a digest of the matching length. Until IANA allocates a type value, the records are published as a TLSA RRset (draft §4.1) and read from there (§4.3). Tools that publish, read or match these records need the restrictions and the matching rule in one place.
+
+**API.**
+
+```go
+// types
+const OPKEYMnemonic = "OPKEY"
+var ErrOPKEYTypeUnallocated error
+func OPKEYType() (uint16, error) // ErrOPKEYTypeUnallocated until allocated
+
+// zone
+const OPKEYUsageDANEEE, OPKEYSelectorSPKI, OPKEYMatchingSHA256, OPKEYMatchingSHA512 uint8 = 3, 1, 1, 2
+type OPKEY struct { Usage, Selector, MatchingType uint8; CertificateAssociationData []byte }
+func NewOPKEY(matchingType uint8, digest []byte) (OPKEY, error)       // strict, for writers
+func NewOPKEYForSPKI(matchingType uint8, spkiDER []byte) (OPKEY, error)
+func DecodeOPKEYRData(rdata []byte) (OPKEY, error)                   // any type number
+func ParseOPKEY(value string) (OPKEY, error)                         // presentation or \# form
+func OPKEYFromTLSA(rrs []*ResourceRecord) ([]OPKEY, error)           // transitional form
+func (OPKEY) Check() error; func (OPKEY) Usable() bool
+func (OPKEY) RData() []byte; func (OPKEY) String() string
+var ErrOPKEYMatch error
+func MatchOPKEYSPKI(spkiDER []byte, keys []OPKEY, supported ...uint8) (bool, error)
+```
+
+**Design decisions.**
+
+- *Type value.* `0` is already `TypeInvalid` here (and "every type" to `Zone.Print`), so there is no exported `TypeOPKEY = 0`. The value is an unexported constant read through `OPKEYType()`, which fails until it is allocated; `StringToRRType`, `RRTypeToString` and `QTypeValidForRequest` consult the same constant, so allocation changes one line. Never a private-use value (draft §4.1).
+- *Permissive decoding.* Any valid TLSA RDATA decodes (only fewer than three octets is an error). A reader must ignore an RR outside the restrictions, not fail on its RRset (draft §2.1); `Usable` / `Check` filter, and `Check` says why.
+- *Shared codec.* Presentation input goes through `ParseTLSA`, wire output through `TLSA.WireBody`, presentation output through `wire.RDataToString(…, TypeTLSA, …)`. Presentation is numeric, as for TLSA; RFC 7218 mnemonics are neither emitted nor accepted.
+- *Matching* (draft §6.2): discard unusable records; pick the strongest matching type (2 over 1) that the caller supports and a usable record carries; match the digest of the DER SPKI against usable records of that type only. No usable record is "no match", not an error. DNSSEC status is the caller's (draft §6.1).
+
+**Tests.** `zone/opkey_test.go`, `types/opkey_test.go`: the draft §2.3 example and its §4.2 generic form round-trip; presentation in either hex case, split, and in parentheses through both zone readers; values outside the restrictions decode, are unusable, are rejected by `NewOPKEY`, and never match; matching with SHA-256 only, SHA-512 only, both (a key listed only by SHA-256 does not match when SHA-512 is selected), and a SHA-256-only caller; `OPKEYFromTLSA` over presentation, received and generic records; generic RDATA under a test-local `TYPE4242`; the `OPKEY` mnemonic fails in zone text while unallocated.
+
+**TS migration notes.** Put `OPKEY` beside the TLSA handler and reuse its parser and encoder. `StringToRRType('OPKEY')` should throw a distinct error class while unallocated. SHA-256 / SHA-512 come from `node:crypto` (or WebCrypto `subtle.digest`, which makes matching async).
+
+**Tracking:** proposed.
 
 ---
 

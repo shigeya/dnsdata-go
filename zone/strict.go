@@ -241,7 +241,7 @@ func (st *strictState) record(owner, text string, spans [][2]int) (*ResourceReco
 	}
 	rrtype, err := types.StringToRRType(text[spans[i][0]:spans[i][1]])
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrPresentationFormat, err)
+		return nil, fmt.Errorf("%w: %w", ErrPresentationFormat, err)
 	}
 	if !hasTTL {
 		return nil, fmt.Errorf("%w: no TTL and no $TTL", ErrPresentationFormat)

@@ -110,7 +110,7 @@ func coerceType(v any) (uint16, error) {
 	case string:
 		t, err := types.StringToRRType(x)
 		if err != nil {
-			return 0, fmt.Errorf("%w: %v", ErrPresentationFormat, err)
+			return 0, fmt.Errorf("%w: %w", ErrPresentationFormat, err)
 		}
 		return t, nil
 	case uint16:
