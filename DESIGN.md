@@ -307,6 +307,7 @@ release; [`CHANGELOG.md`](CHANGELOG.md) has the detail and
 | v0.10.0 | `Result.ReasonCode` / `Result.Err()`; `ZoneStep.Signatures` (per-RRSIG results); `WithStepHandler`; a handler `zone.Registry` per Verifier (`WithRegistry`), `NewVerifier` no longer registers globally; `ZoneStep.DSDigests` filled; MUST 4a – 4d added to the contract | — |
 | v0.10.1 | `WithZoneHandlers` (the zone handlers in a Verifier's own registry, for answers without RDATA octets); the 0.10.0 migration note for zone handlers completed | — |
 | v0.11.0 | NSEC next names and SVCB / HTTPS targets keep their case on the wire (RFC 6840 §5.1); `wire.DomainNameToWirePreserveCase`; a zone signed by BIND with mixed-case names in `testdata/bind/` | UF-008 |
+| v0.12.0 | OPKEY RDATA (`draft-shigeya-dns-opkey-00`) on the TLSA codec: `zone.OPKEY` with `Usable` / `Check`, `NewOPKEY`, `DecodeOPKEYRData`, `OPKEYFromTLSA`, `MatchOPKEYSPKI`; `types.OPKEYType` (type value unallocated) | UP-021 |
 
 The DoH client (UP-007) shipped in v0.1.0 and its dnsdata-js port
 landed with the dnsdata-js refactor.

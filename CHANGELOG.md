@@ -6,6 +6,17 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-11-07
+
+Adds the OPKEY resource record of `draft-shigeya-dns-opkey-00` on top
+of the TLSA codec: reading OPKEY RDATA permissively with a predicate
+for the records a verifier may use, strict constructors for
+publishers, reading a TLSA RRset as OPKEY (the transitional form, used
+until a type value is allocated) and matching a SubjectPublicKeyInfo
+against an RRset. The type value is not allocated; `types.OPKEYType`
+returns an error until it is. TLSA behaviour is unchanged. Go only for
+now; the dnsdata-js port is UP-021.
+
 ### Added
 
 - OPKEY RDATA (`draft-shigeya-dns-opkey-00`) in `zone`, on top of the
