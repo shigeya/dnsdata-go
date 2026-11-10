@@ -6,9 +6,15 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-11-11
+
 The auth client retransmits over UDP. Until now it sent one datagram
 per server and waited 5s; with a single server configured, one lost
-datagram failed the query.
+datagram failed the query. `auth.WithTimeout` is now the wait for one
+attempt (default 2s) and `auth.WithUDPAttempts` the number of
+attempts per server (default 3); the context deadline bounds the
+whole query. Also adds `dnsview -opkey`. Go only for now; the
+dnsdata-js port is UP-022.
 
 ### Added
 

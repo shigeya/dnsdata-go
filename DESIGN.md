@@ -195,7 +195,8 @@ Week 3 actuals:
 - `resolver/auth/` — UDP / TCP plain-DNS client. UDP-first with
   transparent TCP fallback on TC, multi-server fail-over,
   transaction-ID validation, configurable per-server timeout +
-  context deadline. Same `Resolve` adapter shape as DoH so either
+  context deadline (since v0.13.0: per-attempt timeout with UDP
+  retransmission, UP-022). Same `Resolve` adapter shape as DoH so either
   transport drops into `verifier`. Coverage 83.5%.
 
 Week 4 actuals:
@@ -308,6 +309,7 @@ release; [`CHANGELOG.md`](CHANGELOG.md) has the detail and
 | v0.10.1 | `WithZoneHandlers` (the zone handlers in a Verifier's own registry, for answers without RDATA octets); the 0.10.0 migration note for zone handlers completed | — |
 | v0.11.0 | NSEC next names and SVCB / HTTPS targets keep their case on the wire (RFC 6840 §5.1); `wire.DomainNameToWirePreserveCase`; a zone signed by BIND with mixed-case names in `testdata/bind/` | UF-008 |
 | v0.12.0 | OPKEY RDATA (`draft-shigeya-dns-opkey-00`) on the TLSA codec: `zone.OPKEY` with `Usable` / `Check`, `NewOPKEY`, `DecodeOPKEYRData`, `OPKEYFromTLSA`, `MatchOPKEYSPKI`; `types.OPKEYType` (type value unallocated) | UP-021 |
+| v0.13.0 | UDP retransmission in the auth client: `auth.WithUDPAttempts` / `DefaultUDPAttempts` (3), `WithTimeout` per attempt (`DefaultTimeout` 2s, was 5s per server), stray datagrams skipped, context bounds the whole query; `dnsview -opkey` | UP-022, UP-021 |
 
 The DoH client (UP-007) shipped in v0.1.0 and its dnsdata-js port
 landed with the dnsdata-js refactor.
