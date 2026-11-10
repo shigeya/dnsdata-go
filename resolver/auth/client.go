@@ -17,10 +17,14 @@ import (
 // [wire.BuildQuery] (4096 octets).
 const DefaultUDPBufferSize = 4096
 
-// DefaultTimeout caps a single transport attempt (UDP read or TCP
-// dial+read). The total Query budget is governed by the caller's
-// context.Deadline; this is the inner per-server timeout.
-const DefaultTimeout = 5 * time.Second
+// DefaultTimeout is how long one transport attempt waits: one UDP
+// transmission and its reply, or one TCP exchange (dial, query and
+// reply). The total Query budget is the caller's context deadline.
+const DefaultTimeout = 2 * time.Second
+
+// DefaultUDPAttempts is how many times a query is sent over UDP to one
+// server before the client moves to the next server.
+const DefaultUDPAttempts = 3
 
 // Client speaks plain DNS over UDP / TCP. The zero value is not
 // usable; build with [NewClient].
@@ -29,11 +33,12 @@ const DefaultTimeout = 5 * time.Second
 // read-only thereafter. Concurrent calls to [Client.Query] /
 // [Client.Resolve] are safe.
 type Client struct {
-	servers    []string
-	timeout    time.Duration
-	udpBufSize int
-	dial       dialer // injectable for tests
-	queryOpts  wire.QueryOptions
+	servers     []string
+	timeout     time.Duration
+	udpAttempts int
+	udpBufSize  int
+	dial        dialer // injectable for tests
+	queryOpts   wire.QueryOptions
 }
 
 // dialer abstracts net.Dialer so tests can swap in fake network
@@ -64,10 +69,32 @@ func WithServers(addrs ...string) Option {
 	}
 }
 
-// WithTimeout overrides the per-server per-transport timeout
-// (default 5s). The total query budget remains the caller's context.
+// WithTimeout sets how long one transport attempt waits (default
+// [DefaultTimeout], 2s): one UDP transmission and its reply, or one TCP
+// exchange. A server is given up after [WithUDPAttempts] UDP attempts,
+// so without a context deadline one server can take attempts × timeout
+// (plus one TCP attempt when the UDP reply is truncated). The caller's
+// context deadline bounds the whole query and cuts any attempt short.
+//
+// Until v0.12.0 this was the single UDP wait per server (default 5s);
+// a caller that passed its whole budget here should pass it as the
+// context deadline instead.
 func WithTimeout(d time.Duration) Option {
 	return func(c *Client) { c.timeout = d }
+}
+
+// WithUDPAttempts sets how many times a query is sent over UDP to one
+// server before moving to the next (default [DefaultUDPAttempts], 3).
+// Each attempt waits [WithTimeout]. Retransmissions reuse the socket and
+// the transaction ID, so a late reply to an earlier transmission is
+// accepted. Values below 1 are raised to 1 (no retransmission).
+func WithUDPAttempts(n int) Option {
+	return func(c *Client) {
+		if n < 1 {
+			n = 1
+		}
+		c.udpAttempts = n
+	}
 }
 
 // WithUDPBufferSize overrides the UDP receive buffer. The OPT record
@@ -102,9 +129,10 @@ func WithDialer(d net.Dialer) Option {
 // returns [ErrNoServers].
 func NewClient(opts ...Option) *Client {
 	c := &Client{
-		timeout:    DefaultTimeout,
-		udpBufSize: DefaultUDPBufferSize,
-		dial:       netDialer{},
+		timeout:     DefaultTimeout,
+		udpAttempts: DefaultUDPAttempts,
+		udpBufSize:  DefaultUDPBufferSize,
+		dial:        netDialer{},
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -140,6 +168,12 @@ func (c *Client) QueryRaw(ctx context.Context, queryID uint16, query []byte) ([]
 	}
 	var firstErr error
 	for _, addr := range c.servers {
+		if err := contextDone(ctx); err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("%w: %w", ErrAuth, err)
+			}
+			break
+		}
 		resp, err := c.queryOne(ctx, addr, queryID, query)
 		if err != nil {
 			if firstErr == nil {
@@ -156,63 +190,35 @@ func (c *Client) QueryRaw(ctx context.Context, queryID uint16, query []byte) ([]
 }
 
 // queryOne attempts the (UDP → TCP-on-truncation) sequence against a
-// single server. Errors wrap [ErrAuth].
+// single server. Errors wrap [ErrAuth], and the context's error when
+// the context ended during the attempt.
 func (c *Client) queryOne(ctx context.Context, addr string, queryID uint16, query []byte) ([]byte, error) {
 	resp, err := c.queryUDP(ctx, addr, queryID, query)
+	if errors.Is(err, ErrUDPTruncated) {
+		resp, err = c.queryTCP(ctx, addr, queryID, query)
+	}
 	if err == nil {
 		return resp, nil
 	}
-	if errors.Is(err, ErrUDPTruncated) {
-		return c.queryTCP(ctx, addr, queryID, query)
-	}
-	return nil, err
+	return nil, withContextError(ctx, err)
 }
 
-// queryUDP sends query over UDP and reads exactly one datagram back.
-// Returns [ErrUDPTruncated] when the response's TC flag is set so the
-// caller can retry on TCP.
-func (c *Client) queryUDP(ctx context.Context, addr string, queryID uint16, query []byte) ([]byte, error) {
-	deadline := time.Now().Add(c.timeout)
-	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
-		deadline = d
+// withContextError joins the context's error to err when the context
+// is done and err does not already wrap it (dial and TCP failures are
+// reported as plain network errors).
+func withContextError(ctx context.Context, err error) error {
+	ctxErr := contextDone(ctx)
+	if ctxErr == nil || errors.Is(err, ctxErr) {
+		return err
 	}
-
-	conn, err := c.dial.DialContext(ctx, "udp", addr)
-	if err != nil {
-		return nil, fmt.Errorf("%w: udp dial %s: %v", ErrAuth, addr, err)
-	}
-	defer conn.Close()
-	if err := conn.SetDeadline(deadline); err != nil {
-		return nil, fmt.Errorf("%w: udp deadline: %v", ErrAuth, err)
-	}
-
-	if _, err := conn.Write(query); err != nil {
-		return nil, fmt.Errorf("%w: udp write %s: %v", ErrAuth, addr, err)
-	}
-
-	buf := make([]byte, c.udpBufSize)
-	n, err := conn.Read(buf)
-	if err != nil {
-		return nil, fmt.Errorf("%w: udp read %s: %v", ErrAuth, addr, err)
-	}
-	resp := buf[:n]
-	if err := validateResponse(resp, queryID); err != nil {
-		return nil, err
-	}
-	// Check the TC (truncation) bit in the flags word.
-	if len(resp) >= 4 && resp[2]&0x02 != 0 {
-		return nil, ErrUDPTruncated
-	}
-	return resp, nil
+	return errors.Join(err, ctxErr)
 }
 
 // queryTCP sends query over TCP using the RFC 1035 §4.2.2 length-
-// prefixed framing ([stream.Exchange], shared with resolver/dot).
+// prefixed framing ([stream.Exchange], shared with resolver/dot). One
+// attempt: TCP retransmits on its own.
 func (c *Client) queryTCP(ctx context.Context, addr string, queryID uint16, query []byte) ([]byte, error) {
-	deadline := time.Now().Add(c.timeout)
-	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
-		deadline = d
-	}
+	deadline := c.attemptDeadline(ctx)
 
 	conn, err := c.dial.DialContext(ctx, "tcp", addr)
 	if err != nil {

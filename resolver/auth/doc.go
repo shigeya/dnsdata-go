@@ -7,8 +7,15 @@
 //
 //   - Queries are built with [wire.BuildQuery], sharing the EDNS(0) /
 //     DO-bit configuration with resolver/doh.
-//   - UDP is tried first. If the response has the TC (truncation) flag
-//     set, the same query is replayed on TCP per RFC 1035 §4.2.1.
+//   - UDP is tried first. When no reply comes within the per-attempt
+//     timeout, the query is sent again on the same socket with the same
+//     transaction ID, up to [DefaultUDPAttempts] times in all
+//     ([WithUDPAttempts], [WithTimeout]); a late reply to an earlier
+//     transmission is accepted. Datagrams that are too short or carry
+//     another ID are skipped. The caller's context deadline bounds the
+//     whole query, retransmissions and failover included.
+//   - If the response has the TC (truncation) flag set, the same query
+//     is replayed once on TCP per RFC 1035 §4.2.1.
 //   - TCP frames are prefixed with a 2-byte big-endian length per
 //     RFC 1035 §4.2.2.
 //

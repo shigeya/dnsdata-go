@@ -113,7 +113,8 @@ go install github.com/shigeya/dnsdata-go/cmd/dnsview@latest
 dnsview -server 192.0.2.53 -type A,TXT example.com.
 ```
 
-Queries go over UDP, retried over TCP on truncation. `-anchors FILE`
+Queries go over UDP (sent up to three times, two seconds apart, when no
+reply comes), retried over TCP on truncation. `-anchors FILE`
 replaces the built-in IANA root anchors, `-cd` sets the CD bit and
 `-timeout` (default 10s) bounds each query. The exit status is 1 when
 any query could not be validated to completion, 2 on a usage error.

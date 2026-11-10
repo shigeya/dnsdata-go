@@ -78,6 +78,7 @@ UF status legend:
 | [UP-019](#up-019) | DNS-over-TLS client (RFC 7858, RFC 8310 strict authentication) sharing the stream framing with the auth client | `resolver/dot/`, `resolver/internal/{stream,message}` | landed-upstream (dnsdata-js `b338bc2`) |
 | [UP-020](#up-020) | `dnsview` diagnostic command: validate queries against one server and print each `Result` as a JSON line | `cmd/dnsview/` | landed-upstream (dnsdata-js `c0f3622`) |
 | [UP-021](#up-021) | OPKEY RDATA (`draft-shigeya-dns-opkey-00`) on the TLSA codec: usable-record predicate, strict constructor, TLSA RRset as OPKEY, SPKI matching; type value unallocated | `zone/opkey.go`, `types/opkey.go` | proposed |
+| [UP-022](#up-022) | UDP retransmission in the auth client: N attempts per server on one socket with the same ID, per-attempt timeout, stray datagrams skipped, context bounds the whole query | `resolver/auth/udp.go`, `resolver/auth/client.go` | proposed |
 
 UP status legend:
 
@@ -1688,6 +1689,40 @@ func MatchOPKEYSPKI(spkiDER []byte, keys []OPKEY, supported ...uint8) (bool, err
 **dnsview (added after v0.12.0).** `-opkey` adds `"opkey":{"records":[{"value","usable","reason"?}],"error"?}` to a line whose validated answer is TLSA (or OPKEY once allocated): each record's OPKEY presentation, whether it is usable, and `Check`'s reason without the error-category prefix. `-type` defaults to TLSA under `-opkey`; NAME is the full owner name (no `_op` composition). A record shorter than three octets fails the RRset: `error` set, `records` empty, exit status 1. Without `-opkey` the line is unchanged. Tests sign a hierarchy with a TLSA RRset in `cmd/dnsview/opkey_test.go` (the shared `testdata/signed/` has none).
 
 **TS migration notes.** Put `OPKEY` beside the TLSA handler and reuse its parser and encoder. `StringToRRType('OPKEY')` should throw a distinct error class while unallocated. SHA-256 / SHA-512 come from `node:crypto` (or WebCrypto `subtle.digest`, which makes matching async).
+
+**Tracking:** proposed.
+
+---
+
+## UP-022
+
+### UDP retransmission in the auth client
+
+**Go source:** `resolver/auth/udp.go`, `resolver/auth/client.go`.
+
+**Why it matters.** The auth client sent one UDP datagram per server and waited 5s. With one server configured, a single lost datagram (request or reply) failed the query with `ErrAllServersFailed`. Stub resolvers and `dig` retransmit, so the loss is invisible there; it showed up downstream as roughly one failure in three thousand queries against a public resolver from a stable link. The TS client (`resolver/auth/client.ts`, `_query_udp`) has the same one-shot shape.
+
+**API.**
+
+```go
+const DefaultTimeout = 2 * time.Second // was 5s; now per attempt
+const DefaultUDPAttempts = 3
+func WithTimeout(d time.Duration) Option // wait for one transport attempt
+func WithUDPAttempts(n int) Option       // n < 1 is raised to 1
+```
+
+**Design decisions.**
+
+- *Per-attempt timeout.* `WithTimeout` is the wait for one attempt (one UDP transmission and its reply, or one TCP exchange), as `timeout` / `attempts` in `resolv.conf` and `+timeout` / `+tries` in `dig`. A server is given up after `attempts × timeout`; the context deadline bounds the whole query and cuts an attempt short. 2s × 3 keeps the per-server worst case (6s) near the old 5s.
+- *Same socket, same ID.* Retransmissions reuse the connected socket and the transaction ID, so a reply to an earlier transmission that arrives late is accepted (that is the common case of a slow, not lost, reply). A new ID would need a new socket or a set of outstanding IDs to get the same effect; `QueryRaw` also takes a prebuilt query whose ID is the caller's.
+- *Stray datagrams.* A datagram shorter than a header or with another ID is skipped and the read continues until the attempt's deadline. When only such datagrams arrive, the timeout error is joined with the last rejection of each kind seen (`ErrIDMismatch`, `ErrResponseTooShort`) so the cause stays visible.
+- *What ends a server early.* A non-timeout read or write error (for example ICMP port unreachable, surfaced as connection refused on a connected UDP socket) moves to the next server without retransmitting. Once the context is done, no further attempt or server is tried and the error wraps the context's error, on the UDP path and when the context ends during a dial or the TCP retry. Cancellation closes the socket to unblock the read.
+- *No TCP after UDP timeouts.* TCP is used only on truncation, as before. A server that drops UDP usually drops TCP too, and the extra attempt would lengthen every failover.
+- *DoT / DoH unchanged.* They run over TCP, which retransmits; one exchange per server stays.
+
+**Tests.** `resolver/auth/client_retry_test.go`: a loopback UDP server that drops the first k datagrams — k < N succeeds on the same server with k+1 datagrams sent; k = N moves to the next server after exactly N; all lost gives up after at least N × timeout; the context deadline is honoured across retransmissions and failover (one datagram, error wraps `DeadlineExceeded`); cancel without a deadline returns promptly; retransmissions keep the ID; a late reply to the first transmission is accepted during the second attempt; stray datagrams are skipped; only stray datagrams reports `ErrIDMismatch` (also when a short datagram came after it); a deadline during the TCP retry wraps `DeadlineExceeded`; `WithUDPAttempts(0)` is one attempt; the default retransmits.
+
+**TS migration notes.** In `_query_udp`, keep one `dgram` socket per server across attempts, resend the same bytes on each per-attempt timer, and keep listening on `'message'` (ignoring short or mismatched replies) until an answer, the attempt count, or the `AbortSignal`. Add `udp_attempts` beside `timeout_ms` in the client options, default 3, and lower `AUTH_DEFAULT_TIMEOUT_MS` to 2000 with the per-attempt meaning.
 
 **Tracking:** proposed.
 

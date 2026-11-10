@@ -62,11 +62,12 @@ func (l line) failed() bool {
 	return l.Error != "" || (l.OPKEY != nil && l.OPKEY.Error != "")
 }
 
-// authResolver queries cfg.server directly: UDP, then TCP on truncation.
+// authResolver queries cfg.server directly: UDP with the client's
+// default retransmissions, then TCP on truncation. cfg.timeout bounds
+// each validation through the context (see validate), not each attempt.
 func authResolver(cfg config) verifier.Resolver {
 	c := auth.NewClient(
 		auth.WithServers(cfg.server),
-		auth.WithTimeout(cfg.timeout),
 		auth.WithCheckingDisabled(cfg.cd),
 	)
 	return verifier.ResolverFunc(c.Resolve)

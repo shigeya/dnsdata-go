@@ -6,8 +6,17 @@ this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+The auth client retransmits over UDP. Until now it sent one datagram
+per server and waited 5s; with a single server configured, one lost
+datagram failed the query.
+
 ### Added
 
+- `auth.WithUDPAttempts` and `auth.DefaultUDPAttempts` (3): a query is
+  sent over UDP up to that many times to one server before the client
+  moves to the next. Retransmissions reuse the socket and the
+  transaction ID, so a late reply to an earlier transmission is
+  accepted. UP-022.
 - `dnsview -opkey`: a line whose validated answer is a TLSA RRset (or an
   OPKEY RRset, once that type value is allocated) also carries
   `"opkey":{"records":[{"value","usable","reason"?}],"error"?}`, the
@@ -15,6 +24,29 @@ this project adheres to [Semantic Versioning](https://semver.org/).
   `-type` defaults to TLSA under `-opkey`; NAME is the full owner name.
   A record that is not valid TLSA RDATA fails the RRset (`error`, exit
   status 1). Without `-opkey` the output is unchanged. UP-021.
+
+### Changed
+
+- `auth.WithTimeout` is the wait for one transport attempt (one UDP
+  transmission and its reply, or one TCP exchange), and
+  `auth.DefaultTimeout` is 2s (was 5s, the single UDP wait per server).
+  Without a context deadline one unresponsive server now takes up to
+  attempts × timeout (6s by default) before failover. A caller that
+  passed its whole budget to `WithTimeout` should pass it as the
+  context deadline instead, or the first attempt uses all of it.
+- The auth client skips UDP datagrams that are shorter than a DNS
+  header or carry another transaction ID and keeps reading until the
+  attempt's deadline, instead of failing the server on the first one.
+  When only such datagrams arrive, the error wraps
+  `auth.ErrIDMismatch` and / or `auth.ErrResponseTooShort`, whichever
+  were seen.
+- The auth client honours context cancellation during a UDP wait, and
+  stops trying further servers once the context is done; the error
+  wraps `context.Canceled` / `context.DeadlineExceeded`, also when the
+  context ends during a dial or the TCP retry.
+- `dnsview` no longer passes `-timeout` to the auth client as the
+  per-attempt wait; `-timeout` bounds each validation as before, and
+  each query gets the client's default retransmissions.
 
 ## [0.12.0] — 2026-11-07
 
